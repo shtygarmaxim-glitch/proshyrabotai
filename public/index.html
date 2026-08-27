@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>ПРОТОКОЛ: БАРАБАН</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#0a0c11; --panel:#141924; --panel-2:#1b2230; --line:#2a3344;
+    --red:#ff3b52; --red-dim:#5c1c28; --cyan:#6fe4ff; --amber:#ffb238; --green:#39ff6a;
+    --text:#eaf1f5; --text-dim:#7c8798;
+    --font-display:'Press Start 2P', monospace; --font-body:'JetBrains Mono', monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:#000;font-family:var(--font-body);color:var(--text);}
+  .app{max-width:430px;margin:0 auto;min-height:100vh;background:var(--void);
+    background-image:linear-gradient(var(--line) 1px, transparent 1px),linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:24px 24px;background-position:-1px -1px;position:relative;
+    display:flex;flex-direction:column;border-left:1px solid var(--line);border-right:1px solid var(--line);}
+  .topbar{padding:14px 16px 12px;border-bottom:2px solid var(--line);
+    background:linear-gradient(180deg, #10141c 0%, rgba(10,12,17,0) 100%);position:sticky;top:0;z-index:5;}
+  .topbar-row{display:flex;align-items:center;justify-content:space-between;}
+  .brand{font-family:var(--font-display);font-size:11px;letter-spacing:1px;color:var(--red);text-shadow:0 0 8px rgba(255,59,82,.5);}
+  .status{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--green);}
+  .dot{width:6px;height:6px;background:var(--green);box-shadow:0 0 6px var(--green);animation:blink 1.4s infinite;}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+  .subtitle{margin-top:6px;font-size:10.5px;color:var(--text-dim);letter-spacing:.5px;}
+  .content{flex:1;padding:16px 14px 90px;overflow-y:auto;}
+  h2.section-title{font-family:var(--font-display);font-size:11px;color:var(--cyan);letter-spacing:1px;
+    margin:22px 0 10px;display:flex;align-items:center;gap:8px;}
+  h2.section-title:first-child{margin-top:0;}
+  h2.section-title::after{content:'';flex:1;height:1px;background:var(--line);}
+  .hero{border:2px solid var(--line);background:var(--panel);padding:18px 16px;position:relative;overflow:hidden;margin-bottom:6px;}
+  .hero::before{content:'';position:absolute;inset:0;background:repeating-linear-gradient(135deg, rgba(255,59,82,.04) 0 2px, transparent 2px 8px);}
+  .hero-title{font-family:var(--font-display);font-size:14px;line-height:1.7;color:var(--text);position:relative;}
+  .hero-title span{color:var(--red);}
+  .hero-sub{margin-top:10px;font-size:11px;color:var(--text-dim);position:relative;}
+  .btn{font-family:var(--font-body);font-weight:700;font-size:12px;letter-spacing:.5px;padding:12px 14px;
+    border:2px solid var(--line);background:var(--panel-2);color:var(--text);cursor:pointer;text-transform:uppercase;text-align:center;}
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--red);border-color:var(--red);color:#160406;}
+  .btn-ghost{background:transparent;}
+  .btn-cyan{border-color:var(--cyan);color:var(--cyan);}
+  .btn-full{width:100%;}
+  .btn-row{display:flex;gap:8px;}
+  .btn:disabled{opacity:.35;cursor:not-allowed;}
+  .card{border:1px solid var(--line);background:var(--panel);padding:12px;margin-bottom:10px;}
+  .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+  .prize{font-family:var(--font-display);font-size:11px;color:var(--amber);line-height:1.6;}
+  .tag{font-size:9.5px;padding:3px 6px;border:1px solid var(--line);color:var(--text-dim);letter-spacing:.5px;text-transform:uppercase;}
+  .tag-live{color:var(--green);border-color:var(--green);}
+  .tag-red{color:var(--red);border-color:var(--red);}
+  .meta-row{display:flex;gap:14px;margin-top:10px;font-size:10.5px;color:var(--text-dim);flex-wrap:wrap;}
+  .meta-row b{color:var(--text);}
+  .empty{border:1px dashed var(--line);padding:22px 14px;text-align:center;color:var(--text-dim);font-size:11px;}
+  .overlay{position:absolute;inset:0;background:rgba(4,5,8,.72);z-index:20;display:flex;align-items:flex-end;justify-content:center;}
+  .modal{width:100%;max-width:430px;background:var(--panel);border-top:2px solid var(--red);padding:18px 16px 20px;max-height:88vh;overflow-y:auto;}
+  .modal h3{font-family:var(--font-display);font-size:12px;color:var(--red);margin:0 0 14px;}
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:10px;color:var(--text-dim);margin-bottom:6px;letter-spacing:.5px;text-transform:uppercase;}
+  .field input{width:100%;background:var(--void);border:1px solid var(--line);color:var(--text);padding:10px;font-family:var(--font-body);font-size:13px;}
+  .field input:focus{outline:none;border-color:var(--cyan);}
+  .hint{font-size:9.5px;color:var(--text-dim);margin-top:4px;}
+  .err{font-size:10px;color:var(--red);margin-top:10px;min-height:12px;}
+  .nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;display:flex;border-top:2px solid var(--line);background:#0d1017;z-index:10;}
+  .nav-item{flex:1;padding:10px 4px 12px;text-align:center;background:none;border:none;color:var(--text-dim);cursor:pointer;font-family:var(--font-body);font-size:9.5px;letter-spacing:.5px;text-transform:uppercase;}
+  .nav-item svg{display:block;margin:0 auto 4px;}
+  .nav-item.active{color:var(--cyan);}
+  .nav-item.active .ic{fill:var(--cyan);}
+  .ic{fill:var(--text-dim);}
+  .avatar{image-rendering:pixelated;object-fit:contain;background:transparent;flex-shrink:0;}
+  .row{display:flex;align-items:center;gap:10px;}
+  .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0;}
+  .stat{border:1px solid var(--line);background:var(--panel);padding:12px 8px;text-align:center;}
+  .stat b{display:block;font-family:var(--font-display);font-size:15px;color:var(--cyan);margin-bottom:6px;}
+  .stat span{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;}
+  .hist-row{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);padding:10px 12px;margin-bottom:8px;font-size:11px;}
+  .place-pill{font-size:9.5px;padding:3px 7px;border:1px solid var(--amber);color:var(--amber);}
+  .place-pill.lost{border-color:var(--line);color:var(--text-dim);}
+  .table-wrap{position:relative;width:260px;height:260px;margin:14px auto 8px;}
+  .seat{position:absolute;width:56px;transform:translate(-50%,-50%);text-align:center;}
+  .seat .avatar{width:34px;height:34px;margin:0 auto 4px;}
+  .seat .name{font-size:8.5px;color:var(--text-dim);word-break:break-word;}
+  .seat.dead{opacity:.3;}
+  .seat.dead .avatar{filter:grayscale(1);}
+  .seat.turn .avatar{filter:drop-shadow(0 0 6px var(--red)) drop-shadow(0 0 6px var(--red));}
+  .seat.turn .name{color:var(--red);}
+  .table-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:112px;height:112px;border:2px solid var(--line);border-radius:50%;background:radial-gradient(circle, var(--panel-2), var(--void));display:flex;align-items:center;justify-content:center;flex-direction:column;}
+  .cyl-count{font-family:var(--font-body);font-size:10.5px;text-align:center;line-height:2;}
+  .cyl-count .num{font-family:var(--font-display);font-size:13px;margin-right:5px;}
+  .cyl-count .v-live{color:var(--red);text-shadow:0 0 6px rgba(255,59,82,.5);}
+  .cyl-count .v-blank{color:var(--green);text-shadow:0 0 6px rgba(57,255,106,.5);}
+  .cyl-count .v-live .num, .cyl-count .v-blank .num{color:inherit;}
+  .cyl-total{font-size:8.5px;color:var(--text-dim);letter-spacing:.5px;text-transform:uppercase;margin-top:2px;}
+  .turn-timer{text-align:center;font-size:11px;color:var(--red);letter-spacing:.3px;margin:2px 0 10px;font-family:var(--font-display);}
+  .seg-tabs{display:flex;gap:6px;margin:16px 0 4px;}
+  .seg-tab{flex:1;padding:9px 4px;font-size:9px;letter-spacing:.4px;text-transform:uppercase;border:1px solid var(--line);
+    background:var(--panel);color:var(--text-dim);cursor:pointer;font-family:var(--font-body);}
+  .seg-tab.active{color:var(--cyan);border-color:var(--cyan);background:var(--panel-2);}
+  .acc-row{display:flex;align-items:center;gap:12px;}
+  .acc-row .acc-img{width:56px;height:56px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .acc-row .acc-img img.locked{filter:grayscale(1) brightness(.35);}
+  .acc-title{font-family:var(--font-display);font-size:10.5px;margin-bottom:6px;line-height:1.5;}
+  .acc-sub{font-size:9.5px;color:var(--text-dim);line-height:1.5;}
+  .acc-sub.done{color:var(--green);}
+  .acc-lock{font-size:18px;flex-shrink:0;}
+  .log{border:1px solid var(--line);background:#060709;padding:10px 12px;height:130px;overflow-y:auto;font-size:10.5px;line-height:1.9;color:var(--green);margin-top:10px;}
+  .log div{opacity:.9;}
+  .log div.hit{color:var(--red);}
+  .log div.sys{color:var(--cyan);}
+  .result-row{display:flex;align-items:center;gap:10px;border:1px solid var(--line);padding:10px;margin-bottom:8px;}
+  .result-row.win{border-color:var(--amber);background:rgba(255,178,56,.06);}
+  .result-place{font-family:var(--font-display);font-size:11px;width:26px;color:var(--text-dim);}
+  .result-row.win .result-place{color:var(--amber);}
+  .back-link{font-size:10.5px;color:var(--cyan);cursor:pointer;display:inline-block;margin-bottom:12px;}
+  .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--red);color:#160406;
+    padding:10px 16px;font-size:11px;font-weight:700;z-index:30;max-width:380px;text-align:center;}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+
+<script>
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const INIT_DATA = tg ? tg.initData : '';
+const ME = tg && tg.initDataUnsafe && tg.initDataUnsafe.user
+  ? (tg.initDataUnsafe.user.username ? '@'+tg.initDataUnsafe.user.username :
+     [tg.initDataUnsafe.user.first_name, tg.initDataUnsafe.user.last_name].filter(Boolean).join(' '))
+  : 'Тест-пилот';
+const ME_ID = tg && tg.initDataUnsafe && tg.initDataUnsafe.user ? String(tg.initDataUnsafe.user.id) : 'dev-user';
+
+async function api(path, options={}){
+  const res = await fetch('/api'+path, {
+    method: options.method || 'GET',
+    headers: Object.assign({'Content-Type':'application/json','X-Telegram-Init-Data': INIT_DATA}, options.headers||{}),
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const data = await res.json();
+  if(!res.ok) throw new Error(data.error || 'Ошибка сервера');
+  return data;
+}
+
+let state = { tab:'create', openBattleId:null, modalOpen:false, battles:[], profile:null, err:null,
+  profileTab:'overview', createForm: { prize:'', minutes:2, max:5, winners:1, blanks:10, password:'' },
+  isOwner:false, canCreate:false, allowedList:[],
+  prevStatus:{}, autoOpened:new Set(), joinPasswords:{} };
+let pollTimer = null;
+
+const AVATAR_KEYS = ['default','glasses','card'];
+function avatarImg(key, px){
+  const img = document.createElement('img');
+  img.src = '/avatars/' + (AVATAR_KEYS.includes(key) ? key : 'default') + '.png';
+  img.alt = '';
+  img.className = 'avatar';
+  img.style.width = px+'px'; img.style.height = px+'px';
+  img.loading = 'lazy';
+  return img;
+}
+function showToast(msg){
+  const t=document.createElement('div'); t.className='toast'; t.textContent=msg;
+  document.getElementById('app').appendChild(t);
+  setTimeout(()=>t.remove(), 2600);
+}
+
+async function refresh(){
+  try{
+    const [battles, profile] = await Promise.all([api('/battles'), api('/me')]);
+    // Если битва, в которой мы участвуем, только что перешла из набора в бой —
+    // сразу переносим на вкладку боя, не дожидаясь клика по карточке.
+    let autoJump = false;
+    battles.forEach(b=>{
+      const prevStatus = state.prevStatus[b.id];
+      const amIn = b.players.some(p=>p.user_id===ME_ID);
+      if(amIn && b.status==='playing' && prevStatus==='lobby' && !state.autoOpened.has(b.id)){
+        state.openBattleId = b.id;
+        state.tab = 'pistol';
+        state.autoOpened.add(b.id);
+        autoJump = true;
+      }
+      state.prevStatus[b.id] = b.status;
+    });
+    state.battles = battles; state.profile = profile;
+    state.isOwner = !!profile.isOwner; state.canCreate = !!profile.canCreate;
+    if(state.isOwner && state.tab==='admin'){ state.allowedList = await api('/admin/allowed'); }
+    if(autoJump) setupPolling();
+  }catch(e){ console.error(e); }
+  render();
+}
+
+function setupPolling(){
+  clearInterval(pollTimer);
+  // Пока открыта модалка «Новая битва» — не дёргаем refresh(), чтобы не сносить
+  // и не пересоздавать поля ввода прямо во время набора текста.
+  pollTimer = setInterval(()=>{ if(!state.modalOpen) refresh(); }, state.openBattleId ? 1000 : 3500);
+}
+
+/* ============ RENDER ============ */
+const appEl = document.getElementById('app');
+
+function render(){
+  appEl.innerHTML = '';
+  appEl.appendChild(topbar());
+  const content = document.createElement('div'); content.className='content';
+  if(state.tab==='profile') content.appendChild(renderProfile());
+  if(state.tab==='pistol') content.appendChild(renderPistol());
+  if(state.tab==='create') content.appendChild(renderCreate());
+  if(state.tab==='admin' && state.isOwner) content.appendChild(renderAdmin());
+  appEl.appendChild(content);
+  appEl.appendChild(navbar());
+  if(state.modalOpen) appEl.appendChild(createModal());
+}
+
+function topbar(){
+  const el = document.createElement('div'); el.className='topbar';
+  el.innerHTML = `<div class="topbar-row">
+      <div class="brand">ПРОТОКОЛ: БАРАБАН</div>
+      <div class="status"><span class="dot"></span>ОНЛАЙН</div>
+    </div>
+    <div class="subtitle">Клубные битвы · один барабан на всех</div>`;
+  return el;
+}
+
+function navbar(){
+  const items = [
+    {id:'profile', label:'Профиль', icon:iconProfile},
+    {id:'pistol', label:'Пистолет', icon:iconGun},
+    {id:'create', label:'Создать битву', icon:iconPlus},
+  ];
+  if(state.isOwner) items.push({id:'admin', label:'Админ', icon:iconAdmin});
+  const el = document.createElement('div'); el.className='nav';
+  items.forEach(it=>{
+    const b = document.createElement('button');
+    b.className='nav-item'+(state.tab===it.id?' active':'');
+    b.innerHTML = it.icon() + `<div>${it.label}</div>`;
+    b.onclick = async ()=>{ state.tab=it.id; state.openBattleId=null; setupPolling();
+      if(it.id==='admin'){ state.allowedList = await api('/admin/allowed'); } render(); };
+    el.appendChild(b);
+  });
+  return el;
+}
+function iconProfile(){ return `<svg class="ic" width="18" height="18" viewBox="0 0 16 16"><rect x="6" y="2" width="4" height="4"/><rect x="4" y="8" width="8" height="5"/></svg>`; }
+function iconGun(){ return `<svg class="ic" width="18" height="18" viewBox="0 0 16 16"><rect x="2" y="7" width="8" height="2"/><rect x="9" y="9" width="2" height="2"/><rect x="10" y="7" width="2" height="2"/><rect x="4" y="9" width="2" height="4"/></svg>`; }
+function iconPlus(){ return `<svg class="ic" width="18" height="18" viewBox="0 0 16 16"><rect x="7" y="2" width="2" height="12"/><rect x="2" y="7" width="12" height="2"/></svg>`; }
+function iconAdmin(){ return `<svg class="ic" width="18" height="18" viewBox="0 0 16 16"><rect x="6" y="1" width="4" height="2"/><rect x="4" y="3" width="8" height="2"/><rect x="3" y="5" width="10" height="5"/><rect x="5" y="10" width="6" height="2"/><rect x="7" y="12" width="2" height="2"/></svg>`; }
+
+function renderProfile(){
+  const wrap = document.createElement('div');
+  const p = state.profile;
+  wrap.innerHTML = `<h2 class="section-title">ДОСЬЕ ПИЛОТА</h2>`;
+  const card = document.createElement('div'); card.className='card';
+  card.innerHTML = `<div class="row"><div id="pf-avatar"></div>
+      <div><div style="font-family:var(--font-display);font-size:12px;">${ME}</div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px;">Статус: активен</div></div></div>`;
+  wrap.appendChild(card);
+  card.querySelector('#pf-avatar').appendChild(avatarImg(p?p.avatar:'default', 44));
+  if(!p){ wrap.appendChild(Object.assign(document.createElement('div'), {className:'empty', textContent:'Загрузка...'})); return wrap; }
+
+  const segs = document.createElement('div'); segs.className='seg-tabs';
+  [['overview','Обзор'],['accessories','Аксессуары'],['achievements','Достижения']].forEach(([id,label])=>{
+    const b = document.createElement('button'); b.className='seg-tab'+(state.profileTab===id?' active':'');
+    b.textContent = label;
+    b.onclick = ()=>{ state.profileTab=id; render(); };
+    segs.appendChild(b);
+  });
+  wrap.appendChild(segs);
+
+  if(state.profileTab==='accessories') wrap.appendChild(renderAccessories(p));
+  else if(state.profileTab==='achievements') wrap.appendChild(renderAchievements(p));
+  else wrap.appendChild(renderProfileOverview(p));
+  return wrap;
+}
+
+function renderProfileOverview(p){
+  const wrap = document.createElement('div');
+  const stats = document.createElement('div'); stats.className='stat-grid';
+  stats.innerHTML = `<div class="stat"><b>${p.wins}</b><span>Побед</span></div>
+    <div class="stat"><b>${p.total}</b><span>Битв</span></div>
+    <div class="stat"><b>${p.winRate}%</b><span>Винрейт</span></div>`;
+  wrap.appendChild(stats);
+  const hist = document.createElement('div'); hist.innerHTML = `<h2 class="section-title">ИСТОРИЯ</h2>`;
+  wrap.appendChild(hist);
+  if(!p.history.length){ hist.insertAdjacentHTML('beforeend', `<div class="empty">Пока нет завершённых битв.<br>Загляни во вкладку «Создать битву».</div>`); }
+  else p.history.forEach(h=>{
+    const row = document.createElement('div'); row.className='hist-row';
+    row.innerHTML = `<div>${h.prize}</div><div class="place-pill ${h.win?'':'lost'}">${h.win?'Приз':'#'+h.place}</div>`;
+    hist.appendChild(row);
+  });
+  return wrap;
+}
+
+// { key: {title, required} } — держим в синхроне с server/game.js AVATARS
+const AVATAR_META = {
+  default: { title:'Стандартная Рей', required:0 },
+  glasses: { title:'Очки крутые', required:10 },
+  card:    { title:'Карточка-рей', required:100 },
+};
+
+function renderAccessories(p){
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `<div class="hint" style="margin-bottom:10px;">Надень на аву любой разблокированный аксессуар.</div>`;
+  Object.entries(AVATAR_META).forEach(([key, meta])=>{
+    const unlocked = meta.required===0 || p.total>=meta.required;
+    const equipped = p.avatar===key;
+    const row = document.createElement('div'); row.className='card acc-row';
+    const imgWrap = document.createElement('div'); imgWrap.className='acc-img';
+    const img = avatarImg(key, 56);
+    if(!unlocked) img.classList.add('locked');
+    imgWrap.appendChild(img);
+    row.appendChild(imgWrap);
+    const info = document.createElement('div'); info.style.flex='1';
+    info.innerHTML = `<div class="acc-title">${meta.title}</div>
+      <div class="acc-sub${equipped?' done':''}">${unlocked ? (equipped?'✅ Экипирована':'Разблокирована') : `Сыграй ${meta.required} игр, чтобы получить приз! (${p.total}/${meta.required})`}</div>`;
+    row.appendChild(info);
+    if(unlocked){
+      const btn = document.createElement('button'); btn.className='btn'+(equipped?'':' btn-cyan');
+      btn.style.cssText='font-size:9px;padding:9px 10px;';
+      btn.textContent = equipped?'Надета':'Надеть';
+      btn.disabled = equipped;
+      btn.onclick = ()=>act(()=>api('/avatar',{method:'POST', body:{avatar:key}}));
+      row.appendChild(btn);
+    } else {
+      const lock = document.createElement('div'); lock.className='acc-lock'; lock.textContent='🔒';
+      row.appendChild(lock);
+    }
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function renderAchievements(p){
+  const wrap = document.createElement('div');
+  (p.achievements||[]).forEach(a=>{
+    const row = document.createElement('div'); row.className='card acc-row';
+    const imgWrap = document.createElement('div'); imgWrap.className='acc-img';
+    const img = avatarImg(a.image, 56);
+    if(!a.unlocked) img.classList.add('locked');
+    imgWrap.appendChild(img);
+    row.appendChild(imgWrap);
+    const info = document.createElement('div'); info.style.flex='1';
+    info.innerHTML = `<div class="acc-title">${a.title}</div>
+      <div class="acc-sub${a.unlocked?' done':''}">${a.unlocked ? '✅ Получено — забери в «Аксессуарах»' : `Сыграй ${a.required} игр, чтобы получить приз! (${p.total}/${a.required})`}</div>`;
+    row.appendChild(info);
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function renderPistol(){
+  const wrap = document.createElement('div');
+  if(state.openBattleId){
+    const b = state.battles.find(x=>x.id===state.openBattleId);
+    if(b) return renderBattleDetail(b);
+  }
+  wrap.innerHTML = `<h2 class="section-title">СЕЙЧАС В БОЮ</h2>`;
+  const playing = state.battles.filter(b=>b.status==='playing');
+  if(!playing.length){ wrap.insertAdjacentHTML('beforeend', `<div class="empty">Ни одной активной перестрелки.<br>Дождись старта своей битвы.</div>`); }
+  else playing.forEach(b=> wrap.appendChild(battleCard(b, true)) );
+
+  const finTitle = document.createElement('h2'); finTitle.className='section-title'; finTitle.textContent='НЕДАВНО ЗАВЕРШЕНО';
+  wrap.appendChild(finTitle);
+  const fin = state.battles.filter(b=>b.status==='finished');
+  if(!fin.length){ wrap.insertAdjacentHTML('beforeend', `<div class="empty">Завершённых битв ещё нет.</div>`); }
+  else fin.slice(0,5).forEach(b=> wrap.appendChild(battleCard(b, true)) );
+  return wrap;
+}
+
+function battleCard(b, clickable){
+  const el = document.createElement('div'); el.className='card';
+  const statusTag = b.status==='lobby' ? `<span class="tag">${b.hasPassword?'🔒 набор':'набор'}</span>`
+    : b.status==='playing' ? `<span class="tag tag-live">идёт бой</span>`
+    : b.status==='finished' ? `<span class="tag tag-red">завершено</span>`
+    : `<span class="tag">отменено</span>`;
+  el.innerHTML = `<div class="card-top"><div class="prize">🏆 ${b.prize}</div>${statusTag}</div>
+    <div class="meta-row">
+      <div>Игроки: <b>${b.players.length}/${b.maxPlayers}</b></div>
+      <div>Победителей: <b>${b.winnersCount}</b></div>
+      <div>Холостых: <b>${b.blanksCount}</b></div>
+    </div>`;
+  if(clickable && (b.status==='playing'||b.status==='finished')){
+    el.style.cursor='pointer';
+    el.onclick = ()=>{ state.openBattleId=b.id; state.tab='pistol'; setupPolling(); render(); };
+  }
+  return el;
+}
+
+function renderBattleDetail(b){
+  const wrap = document.createElement('div');
+  const back = document.createElement('div'); back.className='back-link'; back.textContent='← ко всем боям';
+  back.onclick = ()=>{ state.openBattleId=null; setupPolling(); render(); };
+  wrap.appendChild(back);
+  wrap.insertAdjacentHTML('beforeend', `<div class="prize" style="margin-bottom:10px;">🏆 ${b.prize}</div>`);
+
+  const secsLeft = (b.status==='playing' && b.turnStartedAt)
+    ? Math.max(0, Math.ceil((b.turnTimeoutMs - (Date.now()-b.turnStartedAt))/1000)) : null;
+
+  const tw = document.createElement('div'); tw.className='table-wrap';
+  const n = b.players.length, radius = 105;
+  b.players.forEach((p,i)=>{
+    const angle = (i*(360/n) - 90) * Math.PI/180;
+    const x = 130 + radius*Math.cos(angle), y = 130 + radius*Math.sin(angle);
+    const seat = document.createElement('div');
+    seat.className='seat'+(!p.alive?' dead':'')+(b.turnUserId===p.user_id?' turn':'');
+    seat.style.left=x+'px'; seat.style.top=y+'px';
+    const isMe = p.user_id===ME_ID;
+    const turnTag = b.turnUserId===p.user_id ? ` 🔫${secsLeft!=null?' '+secsLeft+'с':''}` : '';
+    seat.innerHTML = `<div class="av"></div><div class="name">${p.name}${isMe?' (ты)':''}${turnTag}</div>`;
+    seat.querySelector('.av').appendChild(avatarImg(p.avatar, 34));
+    tw.appendChild(seat);
+  });
+  const center = document.createElement('div'); center.className='table-center';
+  center.innerHTML = b.status==='playing'
+    ? `<div class="cyl-count">
+         <div class="v-live"><span class="num">${b.liveLeft}</span>боевых</div>
+         <div class="v-blank"><span class="num">${b.blankLeft}</span>холостых</div>
+         <div class="cyl-total">Всего: ${b.liveLeft + b.blankLeft}</div>
+       </div>`
+    : `<div class="cyl-count" style="color:var(--amber)">БОЙ<br>ОКОНЧЕН</div>`;
+  tw.appendChild(center);
+  wrap.appendChild(tw);
+
+  const log = document.createElement('div'); log.className='log';
+  b.log.forEach(l=>{ const d=document.createElement('div'); d.className=l.cls; d.textContent='> '+l.text; log.appendChild(d); });
+  wrap.appendChild(log);
+  setTimeout(()=>{ log.scrollTop = log.scrollHeight; },0);
+
+  if(b.status==='playing'){
+    if(b.turnUserId===ME_ID){
+      const timer = document.createElement('div'); timer.className='turn-timer';
+      timer.textContent = `⏱ ${secsLeft} СЕК НА ВЫСТРЕЛ — НЕ УСПЕЕШЬ, ВЫБУДЕШЬ`;
+      wrap.appendChild(timer);
+      const controls = document.createElement('div'); controls.style.marginTop='0'; controls.className='btn-row';
+      const selfBtn = document.createElement('button'); selfBtn.className='btn btn-primary'; selfBtn.style.flex='1';
+      selfBtn.textContent='В СЕБЯ'; selfBtn.onclick=()=>act(()=>api(`/battles/${b.id}/shoot-self`,{method:'POST'}));
+      const otherBtn = document.createElement('button'); otherBtn.className='btn btn-cyan'; otherBtn.style.flex='1';
+      otherBtn.textContent='В ДРУГОГО'; otherBtn.onclick=()=>act(()=>api(`/battles/${b.id}/shoot-other`,{method:'POST'}));
+      controls.appendChild(selfBtn); controls.appendChild(otherBtn); wrap.appendChild(controls);
+    } else {
+      const wait = document.createElement('div'); wait.className='empty'; wait.style.marginTop='12px';
+      const turnPlayer = b.players.find(p=>p.user_id===b.turnUserId);
+      wait.textContent = `${turnPlayer ? turnPlayer.name : 'Игрок'} держит пистолет... (${secsLeft} с)`;
+      wrap.appendChild(wait);
+    }
+  } else if(b.status==='finished'){
+    const results = document.createElement('div'); results.innerHTML = `<h2 class="section-title">РЕЗУЛЬТАТЫ</h2>`;
+    [...b.players].sort((a,c)=>a.place-c.place).forEach(p=>{
+      const win = p.place<=b.winnersCount;
+      const row = document.createElement('div'); row.className='result-row'+(win?' win':'');
+      const isMe = p.user_id===ME_ID;
+      row.innerHTML = `<div class="result-place">#${p.place}</div><div style="flex:1;">${p.name}${isMe?' (ты)':''}</div>
+        ${win?'<div style="color:var(--amber);font-size:10px;">🏆 приз</div>':''}`;
+      results.appendChild(row);
+    });
+    wrap.appendChild(results);
+  }
+  return wrap;
+}
+
+async function act(fn){
+  try{ await fn(); await refresh(); }
+  catch(e){ showToast(e.message); }
+}
+
+function renderCreate(){
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `<div class="hero">
+      <div class="hero-title">ОДИН<br>БАРАБАН.<br><span>ВСЕ РАВНЫ.</span></div>
+      <div class="hero-sub">Создай битву, назначь приз — барабан решит, кому он достанется.</div>
+    </div>`;
+  if(state.canCreate){
+    const btn = document.createElement('button'); btn.className='btn btn-primary btn-full'; btn.style.marginTop='12px';
+    btn.textContent='+ НОВАЯ БИТВА'; btn.onclick = ()=>{ state.modalOpen=true; render(); };
+    wrap.appendChild(btn);
+  } else {
+    const locked = document.createElement('div'); locked.className='empty'; locked.style.marginTop='12px';
+    locked.textContent = 'Создание битв доступно только владельцу клуба и приглашённым им людям.';
+    wrap.appendChild(locked);
+  }
+
+  const curTitle = document.createElement('h2'); curTitle.className='section-title'; curTitle.textContent='ТЕКУЩИЕ ИГРЫ';
+  wrap.appendChild(curTitle);
+  const current = state.battles.filter(b=>b.status==='lobby'||b.status==='playing');
+  if(!current.length){ wrap.insertAdjacentHTML('beforeend', `<div class="empty">Открытых битв нет.<br>Стань первым, кто зарядит барабан.</div>`); }
+  else current.forEach(b=>{
+    const card = battleCard(b, false);
+    if(b.status==='lobby'){
+      const already = b.players.find(p=>p.user_id===ME_ID);
+      const full = b.players.length>=b.maxPlayers;
+      const secsLeft = Math.max(0, Math.round((b.endsAt-Date.now())/1000));
+      const foot = document.createElement('div'); foot.style.marginTop='10px';
+      foot.innerHTML = `<div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;">Старт через ~${Math.ceil(secsLeft/60)} мин.</div>`;
+      if(b.hasPassword && !already && !full){
+        const pwField = document.createElement('div'); pwField.className='field'; pwField.style.marginBottom='8px';
+        pwField.innerHTML = `<label>🔒 Пароль битвы</label><input type="text" placeholder="введи пароль">`;
+        const pwInput = pwField.querySelector('input');
+        pwInput.value = state.joinPasswords[b.id] || '';
+        pwInput.oninput = ()=>{ state.joinPasswords[b.id] = pwInput.value; };
+        foot.appendChild(pwField);
+      }
+      const joinBtn = document.createElement('button'); joinBtn.className='btn btn-cyan btn-full';
+      joinBtn.textContent = already?'Ты в игре':(full?'Мест нет':'Присоединиться');
+      joinBtn.disabled = already||full;
+      joinBtn.onclick=()=>act(()=>api(`/battles/${b.id}/join`,{method:'POST', body:{password: state.joinPasswords[b.id]||''}}));
+      foot.appendChild(joinBtn);
+      card.appendChild(foot);
+    } else {
+      card.style.cursor='pointer';
+      card.onclick=()=>{ state.openBattleId=b.id; state.tab='pistol'; setupPolling(); render(); };
+    }
+    wrap.appendChild(card);
+  });
+
+  const yourTitle = document.createElement('h2'); yourTitle.className='section-title'; yourTitle.textContent='ВАШИ ИГРЫ';
+  wrap.appendChild(yourTitle);
+  const yours = state.battles.filter(b=>b.createdBy===ME_ID || b.players.find(p=>p.user_id===ME_ID));
+  if(!yours.length){ wrap.insertAdjacentHTML('beforeend', `<div class="empty">Ты ещё не создавал и не заходил в битвы.</div>`); }
+  else yours.forEach(b=>{
+    const card = battleCard(b, false);
+    if(b.status==='finished'){
+      const me = b.players.find(p=>p.user_id===ME_ID);
+      const win = me && me.place<=b.winnersCount;
+      const foot = document.createElement('div'); foot.style.marginTop='8px';
+      foot.innerHTML = me ? (win ? `<span class="place-pill">🏆 Победа, приз твой</span>` : `<span class="place-pill lost">Место #${me.place}</span>`) : '';
+      card.appendChild(foot);
+    }
+    if(b.status!=='lobby'){
+      card.style.cursor='pointer';
+      card.onclick=()=>{ state.openBattleId=b.id; state.tab='pistol'; setupPolling(); render(); };
+    }
+    wrap.appendChild(card);
+  });
+  return wrap;
+}
+
+const CREATE_FIELDS = [
+  {id:'f-prize',    key:'prize',    type:'text'},
+  {id:'f-minutes',  key:'minutes',  type:'number'},
+  {id:'f-max',      key:'max',      type:'number'},
+  {id:'f-winners',  key:'winners',  type:'number'},
+  {id:'f-blanks',   key:'blanks',   type:'number'},
+  {id:'f-password', key:'password', type:'text'},
+];
+
+function resetCreateForm(){
+  state.createForm = { prize:'', minutes:2, max:5, winners:1, blanks:10, password:'' };
+}
+
+function renderAdmin(){
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `<h2 class="section-title">ДОСТУП К СОЗДАНИЮ БИТВ</h2>
+    <div class="hint" style="margin-bottom:12px;">Владелец клуба всегда может создавать битвы.
+    Добавь сюда Telegram ID или @username, чтобы дать это право ещё кому-то.</div>`;
+
+  const addRow = document.createElement('div'); addRow.className='card';
+  addRow.innerHTML = `<div class="field" style="margin-bottom:10px;">
+      <label>ID или @username</label>
+      <input id="adm-input" placeholder="618124780 или @nickname">
+    </div>
+    <div class="err" id="adm-err"></div>
+    <button class="btn btn-primary btn-full" id="adm-add">Добавить</button>`;
+  wrap.appendChild(addRow);
+  addRow.querySelector('#adm-add').onclick = async ()=>{
+    const val = addRow.querySelector('#adm-input').value;
+    try{
+      state.allowedList = await api('/admin/allowed', {method:'POST', body:{identifier: val}});
+      addRow.querySelector('#adm-input').value='';
+      render();
+    }catch(e){ addRow.querySelector('#adm-err').textContent = e.message; }
+  };
+
+  const listTitle = document.createElement('h2'); listTitle.className='section-title'; listTitle.textContent='У КОГО ЕСТЬ ДОСТУП';
+  wrap.appendChild(listTitle);
+
+  const ownerCard = document.createElement('div'); ownerCard.className='card';
+  ownerCard.innerHTML = `<div class="row"><div style="flex:1;">👑 Владелец клуба</div><span class="tag tag-live">навсегда</span></div>`;
+  wrap.appendChild(ownerCard);
+
+  if(!state.allowedList.length){
+    wrap.appendChild(Object.assign(document.createElement('div'), {className:'empty', textContent:'Пока никого не добавил, кроме себя.'}));
+  } else {
+    state.allowedList.forEach(entry=>{
+      const row = document.createElement('div'); row.className='card';
+      row.innerHTML = `<div class="row">
+          <div style="flex:1;">${entry.label}</div>
+        </div>`;
+      const rmBtn = document.createElement('button'); rmBtn.className='btn btn-ghost btn-full'; rmBtn.style.marginTop='8px';
+      rmBtn.textContent='Убрать доступ';
+      rmBtn.onclick = async ()=>{
+        state.allowedList = await api('/admin/allowed/'+encodeURIComponent(entry.identifier), {method:'DELETE'});
+        render();
+      };
+      row.appendChild(rmBtn);
+      wrap.appendChild(row);
+    });
+  }
+  return wrap;
+}
+
+function createModal(){
+  const f = state.createForm;
+  const overlay = document.createElement('div'); overlay.className='overlay';
+  const modal = document.createElement('div'); modal.className='modal';
+  modal.innerHTML = `<h3>НОВАЯ БИТВА</h3>
+    <div class="field"><label>Приз</label><input id="f-prize" placeholder="500⭐, промокод, Nitro..." value="${f.prize}"></div>
+    <div class="field"><label>Старт через (минут)</label><input id="f-minutes" type="number" min="1" value="${f.minutes}"></div>
+    <div class="field"><label>Макс. игроков</label><input id="f-max" type="number" min="2" value="${f.max}">
+      <div class="hint">Минимум 2 игрока.</div></div>
+    <div class="field"><label>Количество победителей</label><input id="f-winners" type="number" min="1" value="${f.winners}">
+      <div class="hint">Должно быть меньше макс. игроков.</div></div>
+    <div class="field"><label>Холостых патронов</label><input id="f-blanks" type="number" min="10" value="${f.blanks}">
+      <div class="hint">Минимум 10. Боевых будет столько же, сколько игроков.</div></div>
+    <div class="field"><label>Пароль (необязательно)</label><input id="f-password" placeholder="оставь пустым — вход для всех" value="${f.password}">
+      <div class="hint">Если указать пароль, войти в битву смогут только те, кто его знает.</div></div>
+    <div class="err" id="f-err"></div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" style="flex:1;" id="f-cancel">Отмена</button>
+      <button class="btn btn-primary" style="flex:1;" id="f-submit">Запустить</button>
+    </div>`;
+  overlay.appendChild(modal);
+
+  const submit = async ()=>{
+    const data = {
+      prize: state.createForm.prize,
+      minutes: parseInt(state.createForm.minutes||0),
+      maxPlayers: parseInt(state.createForm.max||0),
+      winnersCount: parseInt(state.createForm.winners||0),
+      blanksCount: parseInt(state.createForm.blanks||0),
+      password: state.createForm.password,
+    };
+    try{
+      await api('/battles', {method:'POST', body:data});
+      state.modalOpen=false;
+      resetCreateForm();
+      await refresh();
+    }catch(e){ modal.querySelector('#f-err').textContent = e.message; }
+  };
+
+  // Каждое поле пишет своё значение прямо в state — так ничего не теряется,
+  // даже если модалку по какой-то причине перерисуют.
+  CREATE_FIELDS.forEach((fld, idx)=>{
+    const input = modal.querySelector('#'+fld.id);
+    input.oninput = ()=>{ state.createForm[fld.key] = input.value; };
+    input.onkeydown = (e)=>{
+      if(e.key !== 'Enter') return;
+      e.preventDefault();
+      const next = CREATE_FIELDS[idx+1];
+      if(next){ modal.querySelector('#'+next.id).focus(); }
+      else { submit(); }
+    };
+  });
+
+  overlay.onclick = (e)=>{ if(e.target===overlay){ state.modalOpen=false; render(); } };
+  modal.querySelector('#f-cancel').onclick = ()=>{ state.modalOpen=false; render(); };
+  modal.querySelector('#f-submit').onclick = submit;
+  return overlay;
+}
+
+refresh();
+setupPolling();
+</script>
+</body>
+</html>

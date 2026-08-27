@@ -1,0 +1,20 @@
+{
+  "name": "roulette-protocol-bot",
+  "version": "1.0.0",
+  "description": "Telegram Mini App бот для клубных розыгрышей в стиле «русской рулетки»",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "grammy": "^1.30.0"
+  }
+}

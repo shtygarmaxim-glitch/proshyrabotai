@@ -405,7 +405,7 @@ setTimeout(()=>{log.scrollTop=log.scrollHeight;},0);
 if(b.status==='playing'){
 if(b.turnUserId===ME_ID){
 const timer=document.createElement('div');timer.className='turn-timer';
-timer.textContent=`⏱ ${secsLeft} сек на выстрел не успел -- умер`;
+timer.textContent=`⏱ ${secsLeft} СЕК, НЕ УСПЕЛ — УМЕР`;
 wrap.appendChild(timer);
 const controls=document.createElement('div');controls.style.marginTop='0';controls.className='btn-row';
 const selfBtn=document.createElement('button');selfBtn.className='btn btn-primary';selfBtn.style.flex='1';

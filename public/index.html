@@ -207,13 +207,28 @@ if(autoJump)setupPolling();
 }catch(e){console.error(e);}
 render();
 }
+function hasActiveSelection(){
+// Пока пользователь что-то выделил (чтобы скопировать) — не дёргаем DOM перерисовкой,
+// иначе выделение слетает на середине копирования.
+const sel=window.getSelection&&window.getSelection();
+return !!(sel && sel.type==='Range' && String(sel).length>0);
+}
 function setupPolling(){
 clearInterval(pollTimer);
-pollTimer=setInterval(()=>{if(!state.modalOpen)refresh();},state.openBattleId ? 500 : 2000);
+pollTimer=setInterval(()=>{if(!state.modalOpen&&!hasActiveSelection())refresh();},state.openBattleId ? 500 : 2000);
 }
 /* ============ RENDER ============ */
 const appEl=document.getElementById('app');
 function render(){
+// Перед полной перерисовкой запоминаем, где пользователь прокрутил основную область
+// и лог боя, чтобы после перерисовки вернуть его туда же (а не дёргать скролл на
+// каждый опрос сервера).
+const prevContent=appEl.querySelector('.content');
+const prevScrollTop=prevContent ? prevContent.scrollTop : 0;
+const prevLog=appEl.querySelector('.log');
+const logWasAtBottom=prevLog ? (prevLog.scrollHeight-prevLog.scrollTop-prevLog.clientHeight<24) : true;
+const prevLogScrollTop=prevLog ? prevLog.scrollTop : 0;
+
 appEl.innerHTML='';
 appEl.appendChild(topbar());
 const content=document.createElement('div');content.className='content';
@@ -224,6 +239,15 @@ if(state.tab==='admin'&&state.isOwner)content.appendChild(renderAdmin());
 appEl.appendChild(content);
 appEl.appendChild(navbar());
 if(state.modalOpen)appEl.appendChild(createModal());
+
+requestAnimationFrame(()=>{
+content.scrollTop=prevScrollTop;
+const newLog=content.querySelector('.log');
+if(newLog){
+if(logWasAtBottom)newLog.scrollTop=newLog.scrollHeight;
+else newLog.scrollTop=Math.min(prevLogScrollTop,newLog.scrollHeight);
+}
+});
 }
 function topbar(){
 const el=document.createElement('div');el.className='topbar';
@@ -421,11 +445,16 @@ wrap.appendChild(tw);
 const log=document.createElement('div');log.className='log';
 b.log.forEach(l=>{const d=document.createElement('div');d.className=l.cls;d.textContent='> '+l.text;log.appendChild(d);});
 wrap.appendChild(log);
-setTimeout(()=>{log.scrollTop=log.scrollHeight;},0);
+// Прокрутка лога к низу/сохранение позиции обрабатывается в render() после вставки в DOM.
+const aliveCount=typeof b.aliveCount==='number' ? b.aliveCount : b.players.filter(p=>p.alive).length;
+const finalDuelSize=b.finalDuelSize||2;
+const isFinal=aliveCount<=finalDuelSize;
 if(b.status==='playing'){
+if(isFinal){
+// Финал: игроки сами выбирают "в себя"/"в другого".
 if(b.turnUserId===ME_ID){
 const timer=document.createElement('div');timer.className='turn-timer';
-timer.textContent=`⏱ ${secsLeft} сек на выстрел не успел -- умер`;
+timer.textContent=`⏱ ФИНАЛ. ${secsLeft} сек на выбор — не успел, выбываешь`;
 wrap.appendChild(timer);
 const controls=document.createElement('div');controls.style.marginTop='0';controls.className='btn-row';
 const selfBtn=document.createElement('button');selfBtn.className='btn btn-primary';selfBtn.style.flex='1';
@@ -436,8 +465,17 @@ controls.appendChild(selfBtn);controls.appendChild(otherBtn);wrap.appendChild(co
 }else{
 const wait=document.createElement('div');wait.className='empty';wait.style.marginTop='12px';
 const turnPlayer=b.players.find(p=>p.user_id===b.turnUserId);
-wait.textContent=`${turnPlayer ? turnPlayer.name : 'Игрок'} держит пистолет... (${secsLeft} с)`;
+wait.textContent=`ФИНАЛ! ${turnPlayer ? turnPlayer.name : 'Игрок'} держит пистолет... (${secsLeft} с)`;
 wrap.appendChild(wait);
+}
+}else{
+// Не финал: барабан стреляет сам раз в AUTO_SHOOT_MS, кнопок нет.
+const autoMs=b.autoShootMs||5000;
+const autoSecsLeft=b.turnStartedAt ? Math.max(0,Math.ceil((autoMs-(Date.now()-b.turnStartedAt))/1000)) : null;
+const turnPlayer=b.players.find(p=>p.user_id===b.turnUserId);
+const auto=document.createElement('div');auto.className='empty';auto.style.marginTop='12px';
+auto.textContent=`🔫 Пистолет у ${turnPlayer ? turnPlayer.name : 'игрока'}${autoSecsLeft!=null?' · выстрел через '+autoSecsLeft+' с':''}`;
+wrap.appendChild(auto);
 }
 }else if(b.status==='finished'){
 const results=document.createElement('div');results.innerHTML=`<h2 class="section-title">РЕЗУЛЬТАТЫ</h2>`;

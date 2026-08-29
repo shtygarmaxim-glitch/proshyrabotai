@@ -3,6 +3,14 @@ const db = require('./db');
 const MIN_PLAYERS = 2;
 const MIN_BLANKS = 10;
 const TURN_TIMEOUT_MS = 15000;
+// Автоматическая стрельба: пока в живых больше 2 игроков, барабан стреляет сам
+// раз в AUTO_SHOOT_INTERVAL_MS, с шансом SELF_SHOT_CHANCE выстрелить в себя
+// (иначе — в случайного другого живого игрока).
+const AUTO_SHOOT_INTERVAL_MS = 5000;
+const SELF_SHOT_CHANCE = 0.10; // 10% в себя, 90% в другого
+// Когда живых игроков остаётся FINAL_DUEL_SIZE (2) — барабан больше не стреляет
+// сам, и решение "в себя / в другого" принимают сами игроки кнопками.
+const FINAL_DUEL_SIZE = 2;
 
 // Аватарки-аксессуары: ключ -> сколько сыгранных (завершённых) битв нужно, чтобы разблокировать.
 // 'default' доступна всем сразу. Файлы лежат в public/avatars/<key>.png
@@ -174,7 +182,10 @@ function nextRandomShooter(battleId) {
   addLog(battleId, `Право стрелять переходит к ${next.name}.`, 'sys');
 }
 
-// Вызывается по таймеру: если игрок держит пистолет дольше 15 секунд, он выбывает.
+// Вызывается по таймеру: работает ТОЛЬКО в финальной дуэли (когда живых <= FINAL_DUEL_SIZE).
+// Если игрок держит пистолет дольше 15 секунд и не выбрал "в себя"/"в другого" — выбывает.
+// Пока живых больше FINAL_DUEL_SIZE, барабан стреляет сам через autoShootTick(), и до
+// этого таймаута дело не доходит (ход передаётся раньше).
 function checkTurnTimeouts() {
   const cutoff = now() - TURN_TIMEOUT_MS;
   const stuck = db.prepare(`
@@ -182,8 +193,9 @@ function checkTurnTimeouts() {
     WHERE status='playing' AND turn_user_id IS NOT NULL AND turn_started_at IS NOT NULL AND turn_started_at <= ?
   `).all(cutoff);
   for (const battle of stuck) {
-    const shooter = db.prepare('SELECT * FROM players WHERE battle_id=? AND user_id=? AND alive=1')
-      .get(battle.id, battle.turn_user_id);
+    const alive = getAlive(battle.id);
+    if (alive.length > FINAL_DUEL_SIZE) continue; // не финал — за этот ход отвечает автостельба
+    const shooter = alive.find(p => p.user_id === battle.turn_user_id);
     if (!shooter) continue;
     addLog(battle.id, `${shooter.name} не успел выстрелить за 15 секунд — выбывает.`, 'hit');
     const fresh = db.prepare('SELECT remaining_place FROM battles WHERE id=?').get(battle.id).remaining_place;
@@ -193,50 +205,79 @@ function checkTurnTimeouts() {
   }
 }
 
+// Вызывается по таймеру раз в секунду: пока живых игроков больше FINAL_DUEL_SIZE (2),
+// барабан сам решает за текущего игрока — с шансом SELF_SHOT_CHANCE стреляет в себя,
+// иначе в случайного другого живого игрока. Интервал между авто-выстрелами — AUTO_SHOOT_INTERVAL_MS.
+function autoShootTick() {
+  const cutoff = now() - AUTO_SHOOT_INTERVAL_MS;
+  const due = db.prepare(`
+    SELECT id, turn_user_id FROM battles
+    WHERE status='playing' AND turn_user_id IS NOT NULL AND turn_started_at IS NOT NULL AND turn_started_at <= ?
+  `).all(cutoff);
+  for (const battle of due) {
+    const alive = getAlive(battle.id);
+    if (alive.length <= FINAL_DUEL_SIZE) continue; // финал — решают сами игроки кнопками
+    const shooter = alive.find(p => p.user_id === battle.turn_user_id);
+    if (!shooter) continue;
+    const isSelf = Math.random() < SELF_SHOT_CHANCE;
+    performShot(battle.id, shooter.user_id, isSelf);
+  }
+}
+
 function assertMyTurn(battle, user) {
   if (battle.status !== 'playing') throw new Error('Бой сейчас не идёт.');
   if (battle.turn_user_id !== user.id) throw new Error('Сейчас не твой ход.');
 }
 
-function shootSelf(user, battleId) {
+// Общая логика одного выстрела — используется и ручными кнопками (финал), и автострельбой.
+function performShot(battleId, shooterUserId, isSelf) {
   const battle = db.prepare('SELECT * FROM battles WHERE id=?').get(battleId);
-  if (!battle) throw new Error('Битва не найдена.');
-  assertMyTurn(battle, user);
-  const shooter = db.prepare('SELECT * FROM players WHERE battle_id=? AND user_id=?').get(battleId, user.id);
-  const round = drawRound(battle);
-  if (round === 'blank') {
-    addLog(battleId, `${shooter.name} стреляет в себя — холостой. Патрон передаётся снова ${shooter.name}.`);
-    setTurn(battleId, user.id);
-  } else {
-    addLog(battleId, `${shooter.name} стреляет в себя — боевой. ${shooter.name} выбывает.`, 'hit');
-    const fresh = db.prepare('SELECT remaining_place FROM battles WHERE id=?').get(battleId).remaining_place;
-    eliminate(battleId, user.id, fresh);
-    db.prepare('UPDATE battles SET remaining_place=? WHERE id=?').run(fresh - 1, battleId);
-    nextRandomShooter(battleId);
+  if (!battle) return null;
+  const shooter = db.prepare('SELECT * FROM players WHERE battle_id=? AND user_id=?').get(battleId, shooterUserId);
+  if (!shooter) return getBattle(battleId);
+  let target = shooter;
+  if (!isSelf) {
+    const others = getAlive(battleId).filter(p => p.user_id !== shooterUserId);
+    if (others.length === 0) { finishIfOneLeft(battleId); return getBattle(battleId); }
+    target = pick(others);
   }
-  return getBattle(battleId);
-}
-
-function shootOther(user, battleId) {
-  const battle = db.prepare('SELECT * FROM battles WHERE id=?').get(battleId);
-  if (!battle) throw new Error('Битва не найдена.');
-  assertMyTurn(battle, user);
-  const shooter = db.prepare('SELECT * FROM players WHERE battle_id=? AND user_id=?').get(battleId, user.id);
-  const others = getAlive(battleId).filter(p => p.user_id !== user.id);
-  if (others.length === 0) { finishIfOneLeft(battleId); return getBattle(battleId); }
-  const target = pick(others);
   const round = drawRound(battle);
   if (round === 'blank') {
-    addLog(battleId, `${shooter.name} стреляет в ${target.name} — холостой. Право стрелять переходит к ${target.name}.`);
-    setTurn(battleId, target.user_id);
+    if (isSelf) {
+      addLog(battleId, `${shooter.name} стреляет в себя — холостой. Патрон передаётся снова ${shooter.name}.`);
+      setTurn(battleId, shooterUserId);
+    } else {
+      addLog(battleId, `${shooter.name} стреляет в ${target.name} — холостой. Право стрелять переходит к ${target.name}.`);
+      setTurn(battleId, target.user_id);
+    }
   } else {
-    addLog(battleId, `${shooter.name} стреляет в ${target.name} — боевой. ${target.name} выбывает.`, 'hit');
+    if (isSelf) {
+      addLog(battleId, `${shooter.name} стреляет в себя — боевой. ${shooter.name} выбывает.`, 'hit');
+    } else {
+      addLog(battleId, `${shooter.name} стреляет в ${target.name} — боевой. ${target.name} выбывает.`, 'hit');
+    }
     const fresh = db.prepare('SELECT remaining_place FROM battles WHERE id=?').get(battleId).remaining_place;
     eliminate(battleId, target.user_id, fresh);
     db.prepare('UPDATE battles SET remaining_place=? WHERE id=?').run(fresh - 1, battleId);
     nextRandomShooter(battleId);
   }
   return getBattle(battleId);
+}
+
+function shootSelf(user, battleId) {
+  const battle = db.prepare('SELECT * FROM battles WHERE id=?').get(battleId);
+  if (!battle) throw new Error('Битва не найдена.');
+  assertMyTurn(battle, user);
+  if (getAlive(battleId).length > FINAL_DUEL_SIZE) throw new Error('Пока не финал — барабан стреляет сам.');
+  return performShot(battleId, user.id, true);
+}
+
+function shootOther(user, battleId) {
+  const battle = db.prepare('SELECT * FROM battles WHERE id=?').get(battleId);
+  if (!battle) throw new Error('Битва не найдена.');
+  assertMyTurn(battle, user);
+  if (getAlive(battleId).length > FINAL_DUEL_SIZE) throw new Error('Пока не финал — барабан стреляет сам.');
+  return performShot(battleId, user.id, false);
 }
 
 function getBattle(battleId) {
@@ -263,6 +304,9 @@ function getBattle(battleId) {
     turnUserId: battle.turn_user_id,
     turnStartedAt: battle.turn_started_at,
     turnTimeoutMs: TURN_TIMEOUT_MS,
+    autoShootMs: AUTO_SHOOT_INTERVAL_MS,
+    finalDuelSize: FINAL_DUEL_SIZE,
+    aliveCount: db.prepare('SELECT COUNT(*) c FROM players WHERE battle_id=? AND alive=1').get(battleId).c,
     endsAt: battle.ends_at,
     liveLeft: chamber.filter(c => c === 'live').length,
     blankLeft: chamber.filter(c => c === 'blank').length,
@@ -302,7 +346,7 @@ function getProfile(user) {
 }
 
 module.exports = {
-  MIN_PLAYERS, MIN_BLANKS, AVATARS,
-  createBattle, joinBattle, resolveExpiredLobbies, checkTurnTimeouts,
+  MIN_PLAYERS, MIN_BLANKS, AVATARS, FINAL_DUEL_SIZE, AUTO_SHOOT_INTERVAL_MS,
+  createBattle, joinBattle, resolveExpiredLobbies, checkTurnTimeouts, autoShootTick,
   shootSelf, shootOther, getBattle, listBattles, getProfile, setAvatar,
 };

@@ -1,8 +1,11 @@
 const db = require('./db');
+const notify = require('./notify');
 
 const MIN_PLAYERS = 2;
 const MIN_BLANKS = 10;
-const TURN_TIMEOUT_MS = 15000;
+// В финале (когда живых == FINAL_DUEL_SIZE) на каждый ход даётся 1 минута —
+// не выбрал "в себя"/"в другого" за это время, выбываешь автоматически.
+const TURN_TIMEOUT_MS = 60000;
 // Автоматическая стрельба: пока в живых больше 2 игроков, барабан стреляет сам
 // раз в AUTO_SHOOT_INTERVAL_MS, с шансом SELF_SHOT_CHANCE выстрелить в себя
 // (иначе — в случайного другого живого игрока).
@@ -54,6 +57,23 @@ function setAvatar(user, avatarKey) {
 
 function setTurn(battleId, userId) {
   db.prepare('UPDATE battles SET turn_user_id=?, turn_started_at=? WHERE id=?').run(userId, now(), battleId);
+  // В финале (живых <= FINAL_DUEL_SIZE) каждый переход хода — это ручной выбор
+  // игрока, о котором стоит написать ему в ЛС с кнопками и таймером 1 минута.
+  if (getAlive(battleId).length <= FINAL_DUEL_SIZE) {
+    notify.yourTurn(battleId, userId).catch(() => {});
+  }
+}
+
+// Отправляет ЛС о начале финала ровно один раз — в момент, когда живых
+// игроков впервые становится FINAL_DUEL_SIZE (учитывает и случай, когда
+// битва с самого начала рассчитана всего на FINAL_DUEL_SIZE участников).
+function maybeAnnounceFinal(battleId) {
+  const battle = db.prepare('SELECT final_notified FROM battles WHERE id=?').get(battleId);
+  if (!battle || battle.final_notified) return;
+  const alive = getAlive(battleId);
+  if (alive.length !== FINAL_DUEL_SIZE) return;
+  db.prepare('UPDATE battles SET final_notified=1 WHERE id=?').run(battleId);
+  notify.finalStarted(alive).catch(() => {});
 }
 
 function shuffle(arr) {
@@ -138,6 +158,13 @@ function startBattle(battleId) {
   `).run(JSON.stringify(chamber), starter.user_id, now(), players.length, battleId);
   addLog(battleId, `Барабан заряжен: ${live} боевых / ${blanks} холостых.`, 'sys');
   addLog(battleId, `Право стрелять получает ${starter.name}.`, 'sys');
+
+  notify.battleStarted(battle, players, starter.name).catch(() => {});
+  // Если игроков ровно FINAL_DUEL_SIZE — битва стартует сразу в "финальном" режиме.
+  maybeAnnounceFinal(battleId);
+  if (players.length <= FINAL_DUEL_SIZE) {
+    notify.yourTurn(battleId, starter.user_id).catch(() => {});
+  }
 }
 
 // Разрешает все просроченные лобби (вызывается по таймеру)
@@ -176,6 +203,9 @@ function finishIfOneLeft(battleId) {
 
 function nextRandomShooter(battleId) {
   if (finishIfOneLeft(battleId)) return;
+  // Как только после чьего-то выбывания живых остаётся ровно FINAL_DUEL_SIZE,
+  // объявляем финал (один раз) — до того, как придёт пинг "твой ход" ниже.
+  maybeAnnounceFinal(battleId);
   const alive = getAlive(battleId);
   const next = pick(alive);
   setTurn(battleId, next.user_id);
@@ -183,7 +213,7 @@ function nextRandomShooter(battleId) {
 }
 
 // Вызывается по таймеру: работает ТОЛЬКО в финальной дуэли (когда живых <= FINAL_DUEL_SIZE).
-// Если игрок держит пистолет дольше 15 секунд и не выбрал "в себя"/"в другого" — выбывает.
+// Если игрок держит пистолет дольше 1 минуты и не выбрал "в себя"/"в другого" — выбывает.
 // Пока живых больше FINAL_DUEL_SIZE, барабан стреляет сам через autoShootTick(), и до
 // этого таймаута дело не доходит (ход передаётся раньше).
 function checkTurnTimeouts() {
@@ -197,7 +227,7 @@ function checkTurnTimeouts() {
     if (alive.length > FINAL_DUEL_SIZE) continue; // не финал — за этот ход отвечает автостельба
     const shooter = alive.find(p => p.user_id === battle.turn_user_id);
     if (!shooter) continue;
-    addLog(battle.id, `${shooter.name} не успел выстрелить за 15 секунд — выбывает.`, 'hit');
+    addLog(battle.id, `${shooter.name} не успел выстрелить за 1 минуту — выбывает.`, 'hit');
     const fresh = db.prepare('SELECT remaining_place FROM battles WHERE id=?').get(battle.id).remaining_place;
     eliminate(battle.id, shooter.user_id, fresh);
     db.prepare('UPDATE battles SET remaining_place=? WHERE id=?').run(fresh - 1, battle.id);

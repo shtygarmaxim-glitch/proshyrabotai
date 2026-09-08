@@ -31,6 +31,10 @@ function buildRouter() {
       // Проверяем ДО записи в БД: бот должен состоять в чате и быть в нём
       // администратором с правом закрепления — иначе живое сообщение не опубликовать.
       const chat = await broadcast.assertUsableChat(chatId);
+      // Ссылка на чат для кликабельного названия в сообщении битвы: у публичных
+      // чатов — t.me/username, иначе — invite-ссылка, если Telegram её отдал
+      // (доступна в getChat, когда бот состоит в чате администратором).
+      const chatLink = chat.username ? `https://t.me/${chat.username}` : (chat.invite_link || '');
       const b = game.createBattle(req.user, {
         prize: req.body.prize,
         minutes: Number(req.body.minutes),
@@ -40,6 +44,7 @@ function buildRouter() {
         password: req.body.password,
         chatId,
         chatTitle: chat.title || '',
+        chatLink,
       });
       res.json(b);
     } catch (e) {

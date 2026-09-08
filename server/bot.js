@@ -44,6 +44,23 @@ function createBot(botToken, publicUrl) {
     );
   });
 
+  // Кнопка "Вступить" под живым сообщением битвы в чате — присоединяет к
+  // битве прямо оттуда, без захода в Mini App.
+  bot.callbackQuery(/^join:(\d+)$/, async (ctx) => {
+    const battleId = Number(ctx.match[1]);
+    const from = ctx.from;
+    const user = {
+      id: String(from.id),
+      name: from.username ? `@${from.username}` : [from.first_name, from.last_name].filter(Boolean).join(' '),
+    };
+    try {
+      game.joinBattle(user, battleId);
+      await ctx.answerCallbackQuery({ text: '✅ Ты за столом.' });
+    } catch (err) {
+      await ctx.answerCallbackQuery({ text: err.message, show_alert: true });
+    }
+  });
+
   // Кнопки "В себя" / "В другого" из ЛС-уведомления о ходе в финале —
   // позволяют выстрелить прямо из чата, без захода в Mini App.
   bot.callbackQuery(/^shoot:(self|other):(\d+)$/, async (ctx) => {

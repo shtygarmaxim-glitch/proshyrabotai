@@ -5,6 +5,7 @@ const { authMiddleware } = require('./auth');
 const buildRouter = require('./routes');
 const createBot = require('./bot');
 const game = require('./game');
+const notify = require('./notify');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 // Принимаем оба названия переменной — на случай если в хостинге она называется WEBAPP_URL
@@ -36,12 +37,14 @@ setInterval(() => game.resolveExpiredLobbies(), 5000);
 setInterval(() => game.autoShootTick(), 1000);
 
 // Раз в 2 секунды проверяем финальную дуэль (когда живых осталось 2) — не завис
-// ли кто-то с пистолетом дольше 15 секунд, не выбрав "в себя"/"в другого"
+// ли кто-то с пистолетом дольше 1 минуты, не выбрав "в себя"/"в другого"
 setInterval(() => game.checkTurnTimeouts(), 2000);
 
 // Бот работает в том же процессе через long polling
 if (PUBLIC_URL) {
   const bot = createBot(BOT_TOKEN, PUBLIC_URL);
+  // Даём game.js доступ к боту, чтобы слать ЛС о старте битвы и о ходах в финале.
+  notify.init(bot, PUBLIC_URL);
   bot.start();
   console.log('Бот запущен (long polling). Mini App URL:', PUBLIC_URL);
 } else {

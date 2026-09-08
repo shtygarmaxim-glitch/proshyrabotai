@@ -91,5 +91,16 @@ if (!battleCols.includes('chat_pinned')) {
   // если битва отменится из-за нехватки игроков, закреплять было нечего.
   db.exec('ALTER TABLE battles ADD COLUMN chat_pinned INTEGER NOT NULL DEFAULT 0');
 }
+if (!battleCols.includes('chat_link')) {
+  // Ссылка на сам чат (t.me/username либо invite-ссылка) — чтобы в сообщении
+  // битвы название чата было кликабельным.
+  db.exec('ALTER TABLE battles ADD COLUMN chat_link TEXT');
+}
+if (!battleCols.includes('chat_game_message_id')) {
+  // ID отдельного "боевого" сообщения — публикуется НОВЫМ сообщением в момент
+  // старта боя (в отличие от chat_message_id — это сообщение лобби, набора
+  // игроков, которое после старта больше не редактируется).
+  db.exec('ALTER TABLE battles ADD COLUMN chat_game_message_id TEXT');
+}
 
 module.exports = db;

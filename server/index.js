@@ -1,115 +1,59 @@
+require('dotenv').config();
+const path = require('path');
 const express = require('express');
+const { authMiddleware } = require('./auth');
+const buildRouter = require('./routes');
+const createBot = require('./bot');
 const game = require('./game');
-const admin = require('./admin');
+const notify = require('./notify');
 const broadcast = require('./broadcast');
 
-function requireOwner(req, res, next) {
-  if (!admin.isOwner(req.user)) return res.status(403).json({ error: 'Доступно только владельцу.' });
-  next();
+const BOT_TOKEN = process.env.BOT_TOKEN;
+// Принимаем оба названия переменной — на случай если в хостинге она называется WEBAPP_URL
+const PUBLIC_URL = process.env.PUBLIC_URL || process.env.WEBAPP_URL;
+const PORT = process.env.PORT || 3000;
+const isDev = process.env.NODE_ENV !== 'production';
+
+if (!BOT_TOKEN) {
+  console.error('Не задан BOT_TOKEN в .env — возьми его у @BotFather.');
+  process.exit(1);
 }
 
-function buildRouter() {
-  const router = express.Router();
+const app = express();
+app.use(express.json());
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
-  router.get('/battles', (req, res) => {
-    res.json(game.listBattles());
-  });
+// Все запросы к /api/* должны прийти из настоящего Telegram Mini App
+app.use('/api', authMiddleware(BOT_TOKEN, { allowDevFallback: isDev }), buildRouter());
 
-  router.get('/battles/:id', (req, res) => {
-    const battle = game.getBattle(Number(req.params.id));
-    if (!battle) return res.status(404).json({ error: 'Не найдено.' });
-    res.json(battle);
-  });
+app.listen(PORT, () => {
+  console.log(`Сервер и Mini App слушают порт ${PORT}`);
+});
 
-  router.post('/battles', async (req, res) => {
-    if (!admin.isAllowed(req.user)) {
-      return res.status(403).json({ error: 'У тебя нет прав создавать битвы. Обратись к администратору клуба.' });
-    }
-    try {
-      const chatId = req.body.chatId ? String(req.body.chatId).trim() : '';
-      if (!chatId) throw new Error('Укажи чат, в котором будет идти бой.');
-      // Проверяем ДО записи в БД: бот должен состоять в чате и быть в нём
-      // администратором с правом закрепления — иначе живое сообщение не опубликовать.
-      const chat = await broadcast.assertUsableChat(chatId);
-      // Ссылка на чат для кликабельного названия в сообщении битвы: у публичных
-      // чатов — t.me/username, иначе — invite-ссылка, если Telegram её отдал
-      // (доступна в getChat, когда бот состоит в чате администратором).
-      const chatLink = chat.username ? `https://t.me/${chat.username}` : (chat.invite_link || '');
-      const b = game.createBattle(req.user, {
-        prize: req.body.prize,
-        minutes: Number(req.body.minutes),
-        maxPlayers: Number(req.body.maxPlayers),
-        winnersCount: Number(req.body.winnersCount),
-        blanksCount: Number(req.body.blanksCount),
-        password: req.body.password,
-        chatId,
-        chatTitle: chat.title || '',
-        chatLink,
-      });
-      res.json(b);
-    } catch (e) {
-      res.status(400).json({ error: e.message });
-    }
-  });
+// Раз в 5 секунд закрываем лобби, у которых истёк таймер
+setInterval(() => game.resolveExpiredLobbies(), 5000);
 
-  router.post('/battles/:id/join', (req, res) => {
-    try {
-      res.json(game.joinBattle(req.user, Number(req.params.id), req.body.password));
-    } catch (e) {
-      res.status(400).json({ error: e.message });
-    }
-  });
+// Раз в 5 секунд обновляем "Старт через" в живых сообщениях чата (пока идёт набор)
+setInterval(() => game.tickLobbyCountdowns(), 5000);
 
-  router.post('/battles/:id/shoot-self', (req, res) => {
-    try {
-      res.json(game.shootSelf(req.user, Number(req.params.id)));
-    } catch (e) {
-      res.status(400).json({ error: e.message });
-    }
-  });
+// Раз в секунду проверяем, не пора ли барабану выстрелить самому (пока живых
+// больше 2 — стрельба автоматическая, раз в 5 секунд, 90% в другого / 10% в себя)
+setInterval(() => game.autoShootTick(), 1000);
 
-  router.post('/battles/:id/shoot-other', (req, res) => {
-    try {
-      res.json(game.shootOther(req.user, Number(req.params.id)));
-    } catch (e) {
-      res.status(400).json({ error: e.message });
-    }
-  });
+// Раз в 2 секунды проверяем финальную дуэль (когда живых осталось 2) — не завис
+// ли кто-то с пистолетом дольше 1 минуты, не выбрав "в себя"/"в другого"
+setInterval(() => game.checkTurnTimeouts(), 2000);
 
-  router.get('/me', (req, res) => {
-    const profile = game.getProfile(req.user);
-    res.json(Object.assign({
-      isOwner: admin.isOwner(req.user),
-      canCreate: admin.isAllowed(req.user),
-    }, profile));
-  });
-
-  router.post('/avatar', (req, res) => {
-    try {
-      res.json(game.setAvatar(req.user, req.body.avatar));
-    } catch (e) {
-      res.status(400).json({ error: e.message });
-    }
-  });
-
-  // ---- Админка (только владелец) ----
-  router.get('/admin/allowed', requireOwner, (req, res) => {
-    res.json(admin.listAllowed());
-  });
-
-  router.post('/admin/allowed', requireOwner, (req, res) => {
-    try {
-      res.json(admin.addAllowed(req.body.identifier));
-    } catch (e) {
-      res.status(400).json({ error: e.message });
-    }
-  });
-
-  router.delete('/admin/allowed/:identifier', requireOwner, (req, res) => {
-    res.json(admin.removeAllowed(req.params.identifier));
-  });
-
-  return router;
+// Бот работает в том же процессе через long polling
+if (PUBLIC_URL) {
+  const bot = createBot(BOT_TOKEN, PUBLIC_URL);
+  // Даём game.js доступ к боту, чтобы слать ЛС о старте битвы и о ходах в финале.
+  notify.init(bot, PUBLIC_URL);
+  // Даём game.js доступ к боту, чтобы публиковать/закреплять/редактировать
+  // живое сообщение битвы в чате.
+  broadcast.init(bot, PUBLIC_URL);
+  bot.start();
+  console.log('Бот запущен (long polling). Mini App URL:', PUBLIC_URL);
+} else {
+  console.warn('PUBLIC_URL не задан — бот не запущен, но сервер и API работают.');
 }
-
-module.exports = buildRouter;

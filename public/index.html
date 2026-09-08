@@ -173,8 +173,16 @@ profileTab:'overview',createForm: {prize:'',chatId:'',minutes:2,max:5,winners:1,
 isOwner:false,canCreate:false,allowedList:[],
 prevStatus:{},autoOpened:new Set(),joinPasswords:{},
 focusBattleId:FOCUS_BATTLE_ID,focusBattleDone:false,
-currentQuote: getRandomQuote()};
+currentQuote: getRandomQuote(),clockOffset:0};
 let pollTimer=null;
+let tickTimer=null;
+// "Настоящее" время с поправкой на расхождение часов клиента и сервера (плюс
+// половина сетевой задержки запроса /me — см. refresh()). Все таймеры в
+// приложении (обратный отсчёт хода, автовыстрел, старт лобби) считают именно
+// от этой функции, а не от голого Date.now() — иначе на телефоне с неточными
+// часами или после медленного запроса секундомер мог стартовать не с
+// круглого числа (например сразу с 59 вместо 60).
+function nowMs(){return Date.now()+state.clockOffset;}
 const AVATAR_KEYS=['default','glasses','card'];
 function avatarImg(key,px){
 const img=document.createElement('img');
@@ -192,7 +200,15 @@ setTimeout(()=>t.remove(),2600);
 }
 async function refresh(){
 try{
+const t0=Date.now();
 const [battles,profile]=await Promise.all([api('/battles'),api('/me')]);
+if(typeof profile.now==='number'){
+// Компенсируем примерно половину времени запроса (round-trip/2), плюс
+// собственно разницу между серверными и клиентскими часами — так offset
+// остаётся точным, даже если сеть немного тормозит.
+const rtt=Date.now()-t0;
+state.clockOffset=(profile.now+rtt/2)-Date.now();
+}
 let autoJump=false;
 battles.forEach(b=>{
 const prevStatus=state.prevStatus[b.id];
@@ -220,7 +236,17 @@ return !!(sel && sel.type==='Range' && String(sel).length>0);
 }
 function setupPolling(){
 clearInterval(pollTimer);
+clearInterval(tickTimer);
+// Опрос сервера — подтягивает реальные события (новый ход, выстрел, чей-то
+// join и т.д.). Раз в 500мс/2с, в зависимости от сетевой задержки — этого
+// достаточно для данных, но СЕКУНДОМЕР на этом не рисуем: сама сеть не
+// тикает ровно раз в секунду, из-за чего цифры скакали неровно.
 pollTimer=setInterval(()=>{if(!state.modalOpen&&!hasActiveSelection())refresh();},state.openBattleId ? 500 : 2000);
+// Отдельный локальный тик ровно раз в секунду — просто перерисовывает уже
+// имеющиеся данные (turnStartedAt/endsAt из последнего refresh() не меняются
+// между опросами), поэтому секунды в таймерах идут чётко одна за другой,
+// не завися от того, когда именно ответит сервер.
+tickTimer=setInterval(()=>{if(!state.modalOpen&&!hasActiveSelection())render();},1000);
 }
 /* ============ RENDER ============ */
 const appEl=document.getElementById('app');
@@ -432,7 +458,7 @@ back.onclick=()=>{state.openBattleId=null;setupPolling();render();};
 wrap.appendChild(back);
 wrap.insertAdjacentHTML('beforeend',`<div class="prize" style="margin-bottom:10px;">🏆 ${b.prize}</div>`);
 const secsLeft=(b.status==='playing'&&b.turnStartedAt)
-? Math.max(0,Math.ceil((b.turnTimeoutMs-(Date.now()-b.turnStartedAt))/1000)) : null;
+? Math.max(0,Math.ceil((b.turnTimeoutMs-(nowMs()-b.turnStartedAt))/1000)) : null;
 const tw=document.createElement('div');tw.className='table-wrap';
 const n=b.players.length,radius=105;
 b.players.forEach((p,i)=>{
@@ -486,7 +512,7 @@ wrap.appendChild(wait);
 }else{
 // Не финал: барабан стреляет сам раз в AUTO_SHOOT_MS, кнопок нет.
 const autoMs=b.autoShootMs||5000;
-const autoSecsLeft=b.turnStartedAt ? Math.max(0,Math.ceil((autoMs-(Date.now()-b.turnStartedAt))/1000)) : null;
+const autoSecsLeft=b.turnStartedAt ? Math.max(0,Math.ceil((autoMs-(nowMs()-b.turnStartedAt))/1000)) : null;
 const turnPlayer=b.players.find(p=>p.user_id===b.turnUserId);
 const auto=document.createElement('div');auto.className='empty';auto.style.marginTop='12px';
 auto.textContent=`🔫 Пистолет у ${turnPlayer ? turnPlayer.name : 'игрока'}${autoSecsLeft!=null?' · выстрел через '+autoSecsLeft+' с':''}`;
@@ -535,7 +561,7 @@ card.dataset.battleId=b.id;
 if(b.status==='lobby'){
 const already=b.players.find(p=>p.user_id===ME_ID);
 const full=b.players.length>=b.maxPlayers;
-const secsLeft=Math.max(0,Math.round((b.endsAt-Date.now())/1000));
+const secsLeft=Math.max(0,Math.round((b.endsAt-nowMs())/1000));
 const foot=document.createElement('div');foot.style.marginTop='10px';
 foot.innerHTML=`<div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;">Старт через ~${Math.ceil(secsLeft/60)} мин.</div>`;
 if(b.hasPassword&&!already&&!full){

@@ -80,5 +80,10 @@ if (!battleCols.includes('chat_message_id')) {
   // ID закреплённого сообщения в chat_id, которое бот редактирует по ходу боя.
   db.exec('ALTER TABLE battles ADD COLUMN chat_message_id TEXT');
 }
+if (!battleCols.includes('chat_title')) {
+  // Название чата (берём из Telegram при создании битвы) — чтобы показывать
+  // строкой "Чат — ..." в самом живом сообщении.
+  db.exec('ALTER TABLE battles ADD COLUMN chat_title TEXT');
+}
 
 module.exports = db;

@@ -116,12 +116,13 @@ function createBattle(user, input) {
   const endsAt = now() + input.minutes * 60000;
   const password = input.password ? String(input.password).trim() : '';
   const chatId = String(input.chatId).trim();
+  const chatTitle = input.chatTitle ? String(input.chatTitle).trim() : '';
   const info = db.prepare(`
     INSERT INTO battles (prize, minutes, max_players, winners_count, blanks_count, status,
-      created_by, created_by_name, ends_at, created_at, password, chat_id)
-    VALUES (?,?,?,?,?, 'lobby', ?,?,?,?,?,?)
+      created_by, created_by_name, ends_at, created_at, password, chat_id, chat_title)
+    VALUES (?,?,?,?,?, 'lobby', ?,?,?,?,?,?,?)
   `).run(input.prize.trim(), input.minutes, input.maxPlayers, input.winnersCount, input.blanksCount,
-    user.id, user.name, endsAt, now(), password || null, chatId);
+    user.id, user.name, endsAt, now(), password || null, chatId, chatTitle || null);
   const battleId = info.lastInsertRowid;
   ensureUser(user);
   db.prepare('INSERT INTO players (battle_id, user_id, name, join_order) VALUES (?,?,?,0)')
@@ -185,6 +186,14 @@ function startBattle(battleId) {
 function resolveExpiredLobbies() {
   const expired = db.prepare("SELECT id FROM battles WHERE status='lobby' AND ends_at<=?").all(now());
   for (const row of expired) startBattle(row.id);
+}
+
+// Вызывается по таймеру раз в 5 секунд: обновляет "Старт через — ..." в живом
+// сообщении для всех битв в лобби, у которых есть чат (сам счёт идёт без
+// новых строк лога — просто перерисовываем текущее время).
+function tickLobbyCountdowns() {
+  const rows = db.prepare("SELECT id FROM battles WHERE status='lobby' AND chat_id IS NOT NULL").all();
+  for (const row of rows) syncChat(row.id);
 }
 
 function getAlive(battleId) {
@@ -347,6 +356,7 @@ function getBattle(battleId) {
     hasPassword: !!battle.password,
     chatId: battle.chat_id,
     chatMessageId: battle.chat_message_id,
+    chatTitle: battle.chat_title,
     createdBy: battle.created_by,
     createdByName: battle.created_by_name,
     turnUserId: battle.turn_user_id,
@@ -395,6 +405,6 @@ function getProfile(user) {
 
 module.exports = {
   MIN_PLAYERS, MIN_BLANKS, AVATARS, FINAL_DUEL_SIZE, AUTO_SHOOT_INTERVAL_MS,
-  createBattle, joinBattle, resolveExpiredLobbies, checkTurnTimeouts, autoShootTick,
+  createBattle, joinBattle, resolveExpiredLobbies, tickLobbyCountdowns, checkTurnTimeouts, autoShootTick,
   shootSelf, shootOther, getBattle, listBattles, getProfile, setAvatar,
 };

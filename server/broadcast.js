@@ -1,11 +1,25 @@
 const { InlineKeyboard } = require('grammy');
 const db = require('./db');
 
-// Модуль отвечает за "живое" сообщение боя в чате: бот публикует одно
-// сообщение, закрепляет его и дальше только редактирует (editMessageText) —
-// сверху "жирным" текущее событие, ниже, в раскрывающейся "цитате"
-// (<blockquote expandable>), — предыдущий лог. Инициализируется один раз из
-// index.js после создания бота — до этого все функции молча ничего не делают.
+// Модуль отвечает за "живые" сообщения боя в чате.
+//
+// У битвы два разных сообщения (это специально: чтобы бой не "терялся" в
+// истории редактирований лобби, и чтобы не закреплять то, что может ещё
+// отмениться из-за нехватки игроков):
+//
+//  1) "Лобби"-сообщение (chat_message_id) — публикуется сразу при создании
+//     битвы, редактируется, пока идёт набор игроков (статус 'lobby'). Никогда
+//     не закрепляется. Как только бой стартует, это сообщение редактируется
+//     ПОСЛЕДНИЙ раз ("бой начался, смотри ниже"), клавиатура снимается — и
+//     больше это сообщение не трогаем. Если игроков не набралось — это же
+//     сообщение просто редактируется на текст отмены, новое сообщение при
+//     этом не публикуется вообще.
+//  2) "Боевое" сообщение (chat_game_message_id) — публикуется НОВЫМ
+//     сообщением в момент старта боя, и вот его уже закрепляем. Дальше именно
+//     его редактируем всю игру: лог, текущий ход, патроны, результат.
+//
+// Инициализируется один раз из index.js после создания бота — до этого все
+// функции молча ничего не делают.
 
 let botRef = null;
 let publicUrlRef = null;
@@ -20,6 +34,12 @@ function escapeHtml(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+// Отдельная экранизация для значений внутри HTML-атрибутов (href="...") —
+// помимо &/</>, там ещё нужно экранировать кавычки.
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/"/g, '&quot;');
 }
 
 const STATUS_LABEL = {
@@ -47,35 +67,90 @@ function formatCountdown(msLeft) {
   return `${totalSec} сек`;
 }
 
-function renderMessage(battle) {
+// Точное время старта — чтобы человек сразу понимал, во сколько именно
+// начнётся бой, а не только "через сколько". Часовой пояс берём фиксированный
+// (МСК) — у бота нет данных о часовом поясе конкретного игрока в чате.
+function formatAbsoluteStart(ts) {
+  const d = new Date(ts);
+  const date = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Moscow' });
+  const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' });
+  return `${date} ${time} МСК`;
+}
+
+// Кликабельное название чата, если есть ссылка (t.me/username или invite-ссылка).
+function chatDisplay(battle) {
+  const title = escapeHtml(battle.chatTitle);
+  return battle.chatLink ? `<a href="${escapeAttr(battle.chatLink)}">${title}</a>` : title;
+}
+
+// ---------- Лобби-сообщение (набор игроков) ----------
+// frozen=true — финальная версия после старта боя: без обратного отсчёта,
+// списка игроков и клавиатуры, просто короткая пометка, что бой начался.
+function renderLobbyMessage(battle, frozen) {
   const lines = [];
   lines.push('🔫 <b>ПРОТОКОЛ: БАРАБАН</b>');
-  lines.push(STATUS_LABEL[battle.status] || '');
+  lines.push(frozen ? '🔫 Бой начался! Продолжение — новым сообщением ниже 👇' : (STATUS_LABEL[battle.status] || ''));
   lines.push('');
 
-  // Основной блок параметров битвы — единой цитатой, целиком жирным.
   const info = [];
-  info.push(`Приз — ${escapeHtml(battle.prize)}`);
-  if (battle.chatTitle) info.push(`Чат — ${escapeHtml(battle.chatTitle)}`);
-  if (battle.status === 'lobby') {
-    info.push(`Старт через — ${formatCountdown(battle.endsAt - Date.now())}`);
+  info.push(`<b>Приз — ${escapeHtml(battle.prize)}</b>`);
+  if (battle.chatTitle) info.push(`<b>Чат — ${chatDisplay(battle)}</b>`);
+  if (!frozen) {
+    info.push(`<b>Старт через — ${formatCountdown(battle.endsAt - Date.now())} (${escapeHtml(formatAbsoluteStart(battle.endsAt))})</b>`);
   }
-  info.push(`Кол-во победителей — ${battle.winnersCount}`);
-  if (battle.status !== 'lobby') {
-    info.push(`Патроны — 🔴 ${battle.liveLeft} боевых / ⚪ ${battle.blankLeft} холостых осталось`);
-  }
-  info.push(`Игроки — ${battle.players.length}/${battle.maxPlayers}`);
-  lines.push(`<blockquote><b>${info.join('\n')}</b></blockquote>`);
+  info.push(`<b>Кол-во победителей — ${battle.winnersCount}</b>`);
+  info.push(`<b>Игроки — ${battle.players.length}/${battle.maxPlayers}</b>`);
+  lines.push(`<blockquote>${info.join('\n')}</blockquote>`);
 
-  // Организатор — обычным текстом без цитаты, курсивом.
   if (battle.createdByName) {
     lines.push('');
     lines.push(`<i>${escapeHtml(battle.createdByName)} Распорядитель битвы, все вопросы к нему.</i>`);
   }
 
-  if (battle.status === 'lobby') {
+  if (!frozen) {
     const names = battle.players.map((p) => escapeHtml(p.name)).join(', ');
     lines.push(`За столом: ${names || '—'}`);
+  }
+
+  return lines.filter((l) => l !== undefined).join('\n');
+}
+
+function buildLobbyKeyboard(battle) {
+  const full = battle.players.length >= battle.maxPlayers;
+  if (full) return undefined;
+  const kb = new InlineKeyboard();
+  if (battle.hasPassword) {
+    // Ведём сразу на конкретную битву в мини-апе (через query-параметр
+    // ?battle=<id>), а не просто на главный экран — там открывается
+    // экран ввода пароля именно для этой битвы.
+    if (publicUrlRef) {
+      const sep = publicUrlRef.includes('?') ? '&' : '?';
+      kb.webApp('🔒 Вступить (по паролю, в приложении)', `${publicUrlRef}${sep}battle=${battle.id}`);
+    }
+  } else {
+    kb.text('🔫 Вступить', `join:${battle.id}`);
+  }
+  return kb.inline_keyboard.length ? kb : undefined;
+}
+
+// ---------- Боевое сообщение (сам бой) ----------
+function renderGameMessage(battle) {
+  const lines = [];
+  lines.push('🔫 <b>ПРОТОКОЛ: БАРАБАН</b>');
+  lines.push(STATUS_LABEL[battle.status] || '');
+  lines.push('');
+
+  const info = [];
+  info.push(`<b>Приз — ${escapeHtml(battle.prize)}</b>`);
+  if (battle.chatTitle) info.push(`<b>Чат — ${chatDisplay(battle)}</b>`);
+  info.push(`<b>Кол-во победителей — ${battle.winnersCount}</b>`);
+  info.push(`<b>Патроны — 🔴 ${battle.liveLeft} боевых / ⚪ ${battle.blankLeft} холостых осталось</b>`);
+  info.push(`<b>Игроки — ${battle.players.length}/${battle.maxPlayers}</b>`);
+  lines.push(`<blockquote>${info.join('\n')}</blockquote>`);
+
+  if (battle.createdByName) {
+    lines.push('');
+    lines.push(`<i>${escapeHtml(battle.createdByName)} Распорядитель битвы, все вопросы к нему.</i>`);
   }
 
   if (battle.status === 'playing' && battle.turnUserId) {
@@ -106,24 +181,7 @@ function renderMessage(battle) {
   return lines.filter((l) => l !== undefined).join('\n');
 }
 
-function buildKeyboard(battle) {
-  if (battle.status === 'lobby') {
-    const full = battle.players.length >= battle.maxPlayers;
-    if (full) return undefined;
-    const kb = new InlineKeyboard();
-    if (battle.hasPassword) {
-      // Ведём сразу на конкретную битву в мини-апе (через query-параметр
-      // ?battle=<id>), а не просто на главный экран — там открывается
-      // экран ввода пароля именно для этой битвы.
-      if (publicUrlRef) {
-        const sep = publicUrlRef.includes('?') ? '&' : '?';
-        kb.webApp('🔒 Вступить (по паролю, в приложении)', `${publicUrlRef}${sep}battle=${battle.id}`);
-      }
-    } else {
-      kb.text('🔫 Вступить', `join:${battle.id}`);
-    }
-    return kb.inline_keyboard.length ? kb : undefined;
-  }
+function buildGameKeyboard(battle) {
   // В финальной дуэли (живых <= finalDuelSize) решение "в себя / в другого"
   // принимает сам игрок — кнопки прямо под сообщением в чате. Нажать по-настоящему
   // сможет только тот, чей сейчас ход: game.shootSelf/shootOther в bot.js
@@ -149,53 +207,91 @@ function sync(battle) {
   return nextChain;
 }
 
-async function doSync(battle) {
-  const text = renderMessage(battle);
-  // editMessageText НЕ убирает старую клавиатуру, если reply_markup не передан —
-  // поэтому всегда передаём явную клавиатуру, а без кнопок — пустую (это её и снимает).
-  const keyboard = buildKeyboard(battle) || new InlineKeyboard();
+async function syncLobby(battle, frozen) {
+  const text = renderLobbyMessage(battle, frozen);
+  const keyboard = frozen ? new InlineKeyboard() : (buildLobbyKeyboard(battle) || new InlineKeyboard());
   try {
-    let messageId = battle.chatMessageId ? Number(battle.chatMessageId) : null;
+    if (!battle.chatMessageId) {
+      const msg = await botRef.api.sendMessage(battle.chatId, text, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard,
+      });
+      db.prepare('UPDATE battles SET chat_message_id=? WHERE id=?').run(String(msg.message_id), battle.id);
+    } else {
+      await botRef.api.editMessageText(battle.chatId, Number(battle.chatMessageId), text, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard,
+      });
+    }
+  } catch (err) {
+    if (!/message is not modified/i.test(err.message)) {
+      console.error(`broadcast: не удалось обновить лобби-сообщение битвы ${battle.id}:`, err.message);
+    }
+  }
+}
+
+async function syncGame(battle) {
+  const text = renderGameMessage(battle);
+  const keyboard = buildGameKeyboard(battle) || new InlineKeyboard();
+  let messageId = battle.chatGameMessageId ? Number(battle.chatGameMessageId) : null;
+  try {
     if (!messageId) {
       const msg = await botRef.api.sendMessage(battle.chatId, text, {
         parse_mode: 'HTML',
         reply_markup: keyboard,
       });
       messageId = msg.message_id;
-      db.prepare('UPDATE battles SET chat_message_id=? WHERE id=?').run(String(messageId), battle.id);
-      // Закреплять сообщение сразу при создании НЕ нужно — на этот момент
-      // битва ещё даже не набрала игроков и вполне может отмениться.
-      // Закрепление происходит ниже, только когда status реально становится 'playing'.
+      db.prepare('UPDATE battles SET chat_game_message_id=? WHERE id=?').run(String(messageId), battle.id);
     } else {
       await botRef.api.editMessageText(battle.chatId, messageId, text, {
         parse_mode: 'HTML',
         reply_markup: keyboard,
       });
     }
-
-    // Закрепляем ровно один раз — в момент, когда бой реально стартовал.
-    if (battle.status === 'playing' && !battle.chatPinned) {
-      try {
-        await botRef.api.pinChatMessage(battle.chatId, messageId, { disable_notification: true });
-        db.prepare('UPDATE battles SET chat_pinned=1 WHERE id=?').run(battle.id);
-      } catch (err) {
-        console.error(`broadcast: не удалось закрепить сообщение битвы ${battle.id}:`, err.message);
-      }
-    }
-
-    // Открепляем сами по завершении/отмене — но только если реально закрепляли
-    // (битвы, отменённые из-за нехватки игроков, никогда не закреплялись).
-    if ((battle.status === 'finished' || battle.status === 'cancelled') && battle.chatPinned) {
-      try {
-        await botRef.api.unpinChatMessage(battle.chatId, messageId);
-        db.prepare('UPDATE battles SET chat_pinned=0 WHERE id=?').run(battle.id);
-      } catch (err) { /* не критично, если уже откреплено */ }
-    }
   } catch (err) {
     if (!/message is not modified/i.test(err.message)) {
-      console.error(`broadcast: не удалось обновить сообщение битвы ${battle.id}:`, err.message);
+      console.error(`broadcast: не удалось обновить боевое сообщение битвы ${battle.id}:`, err.message);
     }
   }
+  if (!messageId) return;
+
+  // Закрепляем ровно один раз — в момент, когда бой реально стартовал.
+  if (battle.status === 'playing' && !battle.chatPinned) {
+    try {
+      await botRef.api.pinChatMessage(battle.chatId, messageId, { disable_notification: true });
+      db.prepare('UPDATE battles SET chat_pinned=1 WHERE id=?').run(battle.id);
+    } catch (err) {
+      console.error(`broadcast: не удалось закрепить сообщение битвы ${battle.id}:`, err.message);
+    }
+  }
+
+  // Открепляем сами по завершении — но только если реально закрепляли.
+  if ((battle.status === 'finished' || battle.status === 'cancelled') && battle.chatPinned) {
+    try {
+      await botRef.api.unpinChatMessage(battle.chatId, messageId);
+      db.prepare('UPDATE battles SET chat_pinned=0 WHERE id=?').run(battle.id);
+    } catch (err) { /* не критично, если уже откреплено */ }
+  }
+}
+
+async function doSync(battle) {
+  if (battle.status === 'lobby') {
+    await syncLobby(battle, false);
+    return;
+  }
+  if (battle.status === 'cancelled' && !battle.chatGameMessageId) {
+    // Не набралось игроков — бой так и не стартовал: просто правим то же
+    // лобби-сообщение на текст отмены, никакого нового сообщения не создаём.
+    await syncLobby(battle, false);
+    return;
+  }
+  // Бой стартовал: если ещё не публиковали боевое сообщение — это тот самый
+  // момент перехода. "Замораживаем" лобби-сообщение (последний раз редактируем
+  // его на "бой начался", снимаем клавиатуру) и публикуем НОВОЕ сообщение боя.
+  if (!battle.chatGameMessageId) {
+    await syncLobby(battle, true);
+  }
+  await syncGame(battle);
 }
 
 // Проверяет перед созданием битвы, что чат существует, бот в нём состоит и

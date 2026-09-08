@@ -6,6 +6,7 @@ const buildRouter = require('./routes');
 const createBot = require('./bot');
 const game = require('./game');
 const notify = require('./notify');
+const broadcast = require('./broadcast');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 // Принимаем оба названия переменной — на случай если в хостинге она называется WEBAPP_URL
@@ -45,6 +46,9 @@ if (PUBLIC_URL) {
   const bot = createBot(BOT_TOKEN, PUBLIC_URL);
   // Даём game.js доступ к боту, чтобы слать ЛС о старте битвы и о ходах в финале.
   notify.init(bot, PUBLIC_URL);
+  // Даём game.js доступ к боту, чтобы публиковать/закреплять/редактировать
+  // живое сообщение битвы в чате.
+  broadcast.init(bot, PUBLIC_URL);
   bot.start();
   console.log('Бот запущен (long polling). Mini App URL:', PUBLIC_URL);
 } else {

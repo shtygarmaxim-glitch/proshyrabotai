@@ -30,7 +30,7 @@ function buildRouter() {
       if (!chatId) throw new Error('Укажи чат, в котором будет идти бой.');
       // Проверяем ДО записи в БД: бот должен состоять в чате и быть в нём
       // администратором с правом закрепления — иначе живое сообщение не опубликовать.
-      await broadcast.assertUsableChat(chatId);
+      const chat = await broadcast.assertUsableChat(chatId);
       const b = game.createBattle(req.user, {
         prize: req.body.prize,
         minutes: Number(req.body.minutes),
@@ -39,6 +39,7 @@ function buildRouter() {
         blanksCount: Number(req.body.blanksCount),
         password: req.body.password,
         chatId,
+        chatTitle: chat.title || '',
       });
       res.json(b);
     } catch (e) {

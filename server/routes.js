@@ -1,6 +1,7 @@
 const express = require('express');
 const game = require('./game');
 const admin = require('./admin');
+const broadcast = require('./broadcast');
 
 function requireOwner(req, res, next) {
   if (!admin.isOwner(req.user)) return res.status(403).json({ error: 'Доступно только владельцу.' });
@@ -20,11 +21,16 @@ function buildRouter() {
     res.json(battle);
   });
 
-  router.post('/battles', (req, res) => {
+  router.post('/battles', async (req, res) => {
     if (!admin.isAllowed(req.user)) {
       return res.status(403).json({ error: 'У тебя нет прав создавать битвы. Обратись к администратору клуба.' });
     }
     try {
+      const chatId = req.body.chatId ? String(req.body.chatId).trim() : '';
+      if (!chatId) throw new Error('Укажи чат, в котором будет идти бой.');
+      // Проверяем ДО записи в БД: бот должен состоять в чате и быть в нём
+      // администратором с правом закрепления — иначе живое сообщение не опубликовать.
+      await broadcast.assertUsableChat(chatId);
       const b = game.createBattle(req.user, {
         prize: req.body.prize,
         minutes: Number(req.body.minutes),
@@ -32,6 +38,7 @@ function buildRouter() {
         winnersCount: Number(req.body.winnersCount),
         blanksCount: Number(req.body.blanksCount),
         password: req.body.password,
+        chatId,
       });
       res.json(b);
     } catch (e) {

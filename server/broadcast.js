@@ -69,12 +69,23 @@ function formatCountdown(msLeft) {
 
 // Точное время старта — чтобы человек сразу понимал, во сколько именно
 // начнётся бой, а не только "через сколько". Часовой пояс берём фиксированный
-// (МСК) — у бота нет данных о часовом поясе конкретного игрока в чате.
+// (МСК, UTC+3 круглый год — в России нет перехода на летнее время с 2014
+// года) — у бота нет данных о часовом поясе конкретного игрока в чате.
+//
+// Считаем смещение вручную, а не через toLocaleDateString('ru-RU', ...):
+// Intl с локалью 'ru-RU' и IANA-таймзоной требует полных ICU-данных, которых
+// на многих минимальных сборках Node просто нет — тогда форматирование молча
+// не применяется (либо съезжает на дефолтную локаль). Ручной расчёт по UTC
+// работает всегда, независимо от того, что зашито в конкретной сборке Node.
+const MSK_OFFSET_MS = 3 * 60 * 60 * 1000;
+function pad2(n) { return String(n).padStart(2, '0'); }
 function formatAbsoluteStart(ts) {
-  const d = new Date(ts);
-  const date = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Moscow' });
-  const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' });
-  return `${date} ${time} МСК`;
+  const d = new Date(ts + MSK_OFFSET_MS);
+  const day = pad2(d.getUTCDate());
+  const month = pad2(d.getUTCMonth() + 1);
+  const hours = pad2(d.getUTCHours());
+  const minutes = pad2(d.getUTCMinutes());
+  return `${day}.${month} ${hours}:${minutes} МСК`;
 }
 
 // Кликабельное название чата, если есть ссылка (t.me/username или invite-ссылка).

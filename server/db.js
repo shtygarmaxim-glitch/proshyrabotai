@@ -66,5 +66,10 @@ if (!battleCols.includes('turn_started_at')) {
 if (!battleCols.includes('password')) {
   db.exec('ALTER TABLE battles ADD COLUMN password TEXT');
 }
+if (!battleCols.includes('final_notified')) {
+  // Флаг: уже отправили ЛС "начался финал" по этой битве (чтобы не слать повторно
+  // на каждый переход хода, пока живых игроков остаётся FINAL_DUEL_SIZE).
+  db.exec('ALTER TABLE battles ADD COLUMN final_notified INTEGER NOT NULL DEFAULT 0');
+}
 
 module.exports = db;

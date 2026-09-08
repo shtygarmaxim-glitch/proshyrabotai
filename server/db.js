@@ -85,5 +85,11 @@ if (!battleCols.includes('chat_title')) {
   // строкой "Чат — ..." в самом живом сообщении.
   db.exec('ALTER TABLE battles ADD COLUMN chat_title TEXT');
 }
+if (!battleCols.includes('chat_pinned')) {
+  // Закреплено ли сейчас живое сообщение битвы в чате. Закрепляем только в
+  // момент реального старта боя (status='playing'), а не сразу при создании —
+  // если битва отменится из-за нехватки игроков, закреплять было нечего.
+  db.exec('ALTER TABLE battles ADD COLUMN chat_pinned INTEGER NOT NULL DEFAULT 0');
+}
 
 module.exports = db;

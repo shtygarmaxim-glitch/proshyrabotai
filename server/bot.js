@@ -1,5 +1,6 @@
 const { Bot, InlineKeyboard } = require('grammy');
 const admin = require('./admin');
+const game = require('./game');
 
 function createBot(botToken, publicUrl) {
   const bot = new Bot(botToken);
@@ -41,6 +42,29 @@ function createBot(botToken, publicUrl) {
       'Команды: /start — открыть приложение, /help — эта подсказка.',
       { reply_markup: openKeyboard() }
     );
+  });
+
+  // Кнопки "В себя" / "В другого" из ЛС-уведомления о ходе в финале —
+  // позволяют выстрелить прямо из чата, без захода в Mini App.
+  bot.callbackQuery(/^shoot:(self|other):(\d+)$/, async (ctx) => {
+    const [, mode, battleIdStr] = ctx.match;
+    const battleId = Number(battleIdStr);
+    const from = ctx.from;
+    const user = {
+      id: String(from.id),
+      name: from.username ? `@${from.username}` : [from.first_name, from.last_name].filter(Boolean).join(' '),
+    };
+    try {
+      if (mode === 'self') {
+        game.shootSelf(user, battleId);
+      } else {
+        game.shootOther(user, battleId);
+      }
+      await ctx.answerCallbackQuery({ text: mode === 'self' ? '🔫 Выстрелил в себя.' : '🎯 Выстрелил в другого.' });
+      await ctx.editMessageReplyMarkup().catch(() => {});
+    } catch (err) {
+      await ctx.answerCallbackQuery({ text: err.message, show_alert: true });
+    }
   });
 
   // Любое другое сообщение (не команду) тоже не оставляем без ответа

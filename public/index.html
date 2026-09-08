@@ -133,6 +133,10 @@ const ME=tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user
 [tg.initDataUnsafe.user.first_name,tg.initDataUnsafe.user.last_name].filter(Boolean).join(' '))
 : 'Тест-пилот';
 const ME_ID=tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user ? String(tg.initDataUnsafe.user.id) : 'dev-user';
+// Если пришли по ссылке из сообщения битвы в чате (?battle=<id> — так ведёт
+// кнопка "Вступить (по паролю)" под сообщением) — сразу открываем и
+// прокручиваем к этой битве с фокусом на поле пароля.
+const FOCUS_BATTLE_ID=(()=>{const v=new URLSearchParams(window.location.search).get('battle');return v?Number(v):null;})();
 
 // Цитаты Аянами Рей
 const REI_QUOTES = [
@@ -168,6 +172,7 @@ let state={tab:'create',openBattleId:null,modalOpen:false,battles:[],profile:nul
 profileTab:'overview',createForm: {prize:'',chatId:'',minutes:2,max:5,winners:1,blanks:10,password:''},
 isOwner:false,canCreate:false,allowedList:[],
 prevStatus:{},autoOpened:new Set(),joinPasswords:{},
+focusBattleId:FOCUS_BATTLE_ID,focusBattleDone:false,
 currentQuote: getRandomQuote()};
 let pollTimer=null;
 const AVATAR_KEYS=['default','glasses','card'];
@@ -241,6 +246,16 @@ appEl.appendChild(navbar());
 if(state.modalOpen)appEl.appendChild(createModal());
 
 requestAnimationFrame(()=>{
+if(state.focusBattleId&&!state.focusBattleDone&&state.tab==='create'){
+const target=content.querySelector(`[data-battle-id="${state.focusBattleId}"]`);
+if(target){
+target.scrollIntoView({block:'center'});
+const pwInput=target.querySelector('.field input');
+if(pwInput)pwInput.focus();
+state.focusBattleDone=true;
+return;
+}
+}
 content.scrollTop=prevScrollTop;
 const newLog=content.querySelector('.log');
 if(newLog){
@@ -516,6 +531,7 @@ const current=state.battles.filter(b=>b.status==='lobby'||b.status==='playing');
 if(!current.length){wrap.insertAdjacentHTML('beforeend',`<div class="empty">Открытых битв нет.<br>Стань первым, кто зарядит барабан.</div>`);}
 else current.forEach(b=>{
 const card=battleCard(b,false);
+card.dataset.battleId=b.id;
 if(b.status==='lobby'){
 const already=b.players.find(p=>p.user_id===ME_ID);
 const full=b.players.length>=b.maxPlayers;

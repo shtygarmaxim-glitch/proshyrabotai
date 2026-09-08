@@ -58,11 +58,10 @@ function setAvatar(user, avatarKey) {
 
 function setTurn(battleId, userId) {
   db.prepare('UPDATE battles SET turn_user_id=?, turn_started_at=? WHERE id=?').run(userId, now(), battleId);
-  // В финале (живых <= FINAL_DUEL_SIZE) каждый переход хода — это ручной выбор
-  // игрока, о котором стоит написать ему в ЛС с кнопками и таймером 1 минута.
-  if (getAlive(battleId).length <= FINAL_DUEL_SIZE) {
-    notify.yourTurn(battleId, userId).catch(() => {});
-  }
+  // В финале кнопки "В себя"/"В другого" уже есть прямо под боевым сообщением
+  // в чате (см. broadcast.js) — отдельного дублирующего пинга в ЛС с теми же
+  // кнопками на каждый переход хода больше не шлём, это было лишним и
+  // навязчивым (уводило игрока из чата в личку на каждый ход).
 }
 
 // Отправляет ЛС о начале финала ровно один раз — в момент, когда живых
@@ -117,12 +116,13 @@ function createBattle(user, input) {
   const password = input.password ? String(input.password).trim() : '';
   const chatId = String(input.chatId).trim();
   const chatTitle = input.chatTitle ? String(input.chatTitle).trim() : '';
+  const chatLink = input.chatLink ? String(input.chatLink).trim() : '';
   const info = db.prepare(`
     INSERT INTO battles (prize, minutes, max_players, winners_count, blanks_count, status,
-      created_by, created_by_name, ends_at, created_at, password, chat_id, chat_title)
-    VALUES (?,?,?,?,?, 'lobby', ?,?,?,?,?,?,?)
+      created_by, created_by_name, ends_at, created_at, password, chat_id, chat_title, chat_link)
+    VALUES (?,?,?,?,?, 'lobby', ?,?,?,?,?,?,?,?)
   `).run(input.prize.trim(), input.minutes, input.maxPlayers, input.winnersCount, input.blanksCount,
-    user.id, user.name, endsAt, now(), password || null, chatId, chatTitle || null);
+    user.id, user.name, endsAt, now(), password || null, chatId, chatTitle || null, chatLink || null);
   const battleId = info.lastInsertRowid;
   ensureUser(user);
   db.prepare('INSERT INTO players (battle_id, user_id, name, join_order) VALUES (?,?,?,0)')
@@ -176,9 +176,6 @@ function startBattle(battleId) {
   notify.battleStarted(battle, players, starter.name).catch(() => {});
   // Если игроков ровно FINAL_DUEL_SIZE — битва стартует сразу в "финальном" режиме.
   maybeAnnounceFinal(battleId);
-  if (players.length <= FINAL_DUEL_SIZE) {
-    notify.yourTurn(battleId, starter.user_id).catch(() => {});
-  }
   syncChat(battleId);
 }
 
@@ -356,8 +353,10 @@ function getBattle(battleId) {
     hasPassword: !!battle.password,
     chatId: battle.chat_id,
     chatMessageId: battle.chat_message_id,
+    chatGameMessageId: battle.chat_game_message_id,
     chatPinned: !!battle.chat_pinned,
     chatTitle: battle.chat_title,
+    chatLink: battle.chat_link,
     createdBy: battle.created_by,
     createdByName: battle.created_by_name,
     turnUserId: battle.turn_user_id,

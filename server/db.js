@@ -71,5 +71,14 @@ if (!battleCols.includes('final_notified')) {
   // на каждый переход хода, пока живых игроков остаётся FINAL_DUEL_SIZE).
   db.exec('ALTER TABLE battles ADD COLUMN final_notified INTEGER NOT NULL DEFAULT 0');
 }
+if (!battleCols.includes('chat_id')) {
+  // Telegram-чат (ID или @username группы), в котором идёт эта битва:
+  // туда бот публикует и закрепляет живое сообщение с ходом боя.
+  db.exec('ALTER TABLE battles ADD COLUMN chat_id TEXT');
+}
+if (!battleCols.includes('chat_message_id')) {
+  // ID закреплённого сообщения в chat_id, которое бот редактирует по ходу боя.
+  db.exec('ALTER TABLE battles ADD COLUMN chat_message_id TEXT');
+}
 
 module.exports = db;

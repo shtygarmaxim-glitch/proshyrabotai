@@ -356,6 +356,7 @@ function getBattle(battleId) {
     hasPassword: !!battle.password,
     chatId: battle.chat_id,
     chatMessageId: battle.chat_message_id,
+    chatPinned: !!battle.chat_pinned,
     chatTitle: battle.chat_title,
     createdBy: battle.created_by,
     createdByName: battle.created_by_name,

@@ -33,15 +33,44 @@ const STATUS_LABEL = {
 // уходит отдельно, жирным, как текущее событие — в цитату не попадает).
 const QUOTE_LINES = 10;
 
+// "Старт через" — красиво форматируем остаток времени: пока больше минуты —
+// в минутах, а в последнюю минуту — уже в секундах (обновляется тиком раз в
+// 5 секунд из game.js, так и получается 20 секунд / 15 секунд / 10 секунд...).
+function formatCountdown(msLeft) {
+  if (msLeft <= 0) return 'вот-вот стартует…';
+  const totalSec = Math.ceil(msLeft / 1000);
+  if (totalSec >= 60) {
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return s ? `${m} мин ${s} сек` : `${m} мин`;
+  }
+  return `${totalSec} сек`;
+}
+
 function renderMessage(battle) {
   const lines = [];
-  lines.push(`⚡ <b>${escapeHtml(battle.prize)}</b>`);
+  lines.push('🔫 <b>ПРОТОКОЛ: БАРАБАН</b>');
   lines.push(STATUS_LABEL[battle.status] || '');
-  lines.push(`Игроки: <b>${battle.players.length}/${battle.maxPlayers}</b>  •  Победителей: <b>${battle.winnersCount}</b>`);
+  lines.push('');
+  lines.push(`Приз — <b>${escapeHtml(battle.prize)}</b>`);
+  if (battle.chatTitle) lines.push(`Чат — ${escapeHtml(battle.chatTitle)}`);
+  if (battle.status === 'lobby') {
+    lines.push(`Старт через — <b>${formatCountdown(battle.endsAt - Date.now())}</b>`);
+  }
+  lines.push(`Кол-во победителей — ${battle.winnersCount}`);
+  if (battle.status !== 'lobby') {
+    lines.push(`Патроны — 🔴 ${battle.liveLeft} боевых / ⚪ ${battle.blankLeft} холостых осталось`);
+  }
+  lines.push(`Игроки — <b>${battle.players.length}/${battle.maxPlayers}</b>`);
 
   if (battle.status === 'lobby') {
     const names = battle.players.map((p) => escapeHtml(p.name)).join(', ');
     lines.push(`За столом: ${names || '—'}`);
+  }
+
+  if (battle.status === 'playing' && battle.turnUserId) {
+    const turnPlayer = battle.players.find((p) => p.user_id === battle.turnUserId);
+    if (turnPlayer) lines.push(`Ход — <b>${escapeHtml(turnPlayer.name)}</b>`);
   }
 
   const logs = battle.log || [];
@@ -50,7 +79,8 @@ function renderMessage(battle) {
     const last = logs[logs.length - 1];
     const prev = logs.slice(0, -1).slice(-QUOTE_LINES);
     if (prev.length) {
-      lines.push(`<blockquote expandable>${prev.map((l) => escapeHtml(l.text)).join('\n')}</blockquote>`);
+      // Пустая строка между записями — иначе весь лог сливается в одну кашу.
+      lines.push(`<blockquote expandable>${prev.map((l) => escapeHtml(l.text)).join('\n\n')}</blockquote>`);
     }
     lines.push(`<b>${escapeHtml(last.text)}</b>`);
   }
@@ -67,16 +97,27 @@ function renderMessage(battle) {
 }
 
 function buildKeyboard(battle) {
-  if (battle.status !== 'lobby') return undefined;
-  const full = battle.players.length >= battle.maxPlayers;
-  if (full) return undefined;
-  const kb = new InlineKeyboard();
-  if (battle.hasPassword) {
-    if (publicUrlRef) kb.webApp('🔒 Вступить (по паролю, в приложении)', publicUrlRef);
-  } else {
-    kb.text('🔫 Вступить', `join:${battle.id}`);
+  if (battle.status === 'lobby') {
+    const full = battle.players.length >= battle.maxPlayers;
+    if (full) return undefined;
+    const kb = new InlineKeyboard();
+    if (battle.hasPassword) {
+      if (publicUrlRef) kb.webApp('🔒 Вступить (по паролю, в приложении)', publicUrlRef);
+    } else {
+      kb.text('🔫 Вступить', `join:${battle.id}`);
+    }
+    return kb.inline_keyboard.length ? kb : undefined;
   }
-  return kb.inline_keyboard.length ? kb : undefined;
+  // В финальной дуэли (живых <= finalDuelSize) решение "в себя / в другого"
+  // принимает сам игрок — кнопки прямо под сообщением в чате. Нажать по-настоящему
+  // сможет только тот, чей сейчас ход: game.shootSelf/shootOther в bot.js
+  // отклонит нажатие любого другого игрока с алертом "Сейчас не твой ход."
+  if (battle.status === 'playing' && battle.turnUserId && battle.aliveCount <= battle.finalDuelSize) {
+    return new InlineKeyboard()
+      .text('🔫 В себя', `shoot:self:${battle.id}`)
+      .text('🎯 В другого', `shoot:other:${battle.id}`);
+  }
+  return undefined;
 }
 
 // Простая очередь на битву, чтобы редактирования одного и того же сообщения
@@ -94,7 +135,9 @@ function sync(battle) {
 
 async function doSync(battle) {
   const text = renderMessage(battle);
-  const keyboard = buildKeyboard(battle);
+  // editMessageText НЕ убирает старую клавиатуру, если reply_markup не передан —
+  // поэтому всегда передаём явную клавиатуру, а без кнопок — пустую (это её и снимает).
+  const keyboard = buildKeyboard(battle) || new InlineKeyboard();
   try {
     if (!battle.chatMessageId) {
       const msg = await botRef.api.sendMessage(battle.chatId, text, {

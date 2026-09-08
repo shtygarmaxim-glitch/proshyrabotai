@@ -1,5 +1,6 @@
 const db = require('./db');
 const notify = require('./notify');
+const broadcast = require('./broadcast');
 
 const MIN_PLAYERS = 2;
 const MIN_BLANKS = 10;
@@ -91,8 +92,16 @@ function addLog(battleId, text, cls = '') {
     .run(battleId, text, cls, now());
 }
 
-function validateCreateInput({ prize, minutes, maxPlayers, winnersCount, blanksCount }) {
+// Пересобирает и (если у битвы указан chatId) публикует/редактирует живое
+// сообщение боя в чате. Вызывается в конце каждого действия, меняющего
+// состояние битвы — join, старт, выстрел, переход хода, финиш.
+function syncChat(battleId) {
+  broadcast.sync(getBattle(battleId)).catch(() => {});
+}
+
+function validateCreateInput({ prize, minutes, maxPlayers, winnersCount, blanksCount, chatId }) {
   if (!prize || !String(prize).trim()) return 'Укажи приз.';
+  if (!chatId || !String(chatId).trim()) return 'Укажи чат, в котором будет идти бой.';
   if (!Number.isFinite(minutes) || minutes < 1) return 'Минимум 1 минута до старта.';
   if (!Number.isFinite(maxPlayers) || maxPlayers < MIN_PLAYERS) return `Минимум ${MIN_PLAYERS} игрока.`;
   if (!Number.isFinite(winnersCount) || winnersCount < 1 || winnersCount >= maxPlayers)
@@ -106,17 +115,19 @@ function createBattle(user, input) {
   if (err) throw new Error(err);
   const endsAt = now() + input.minutes * 60000;
   const password = input.password ? String(input.password).trim() : '';
+  const chatId = String(input.chatId).trim();
   const info = db.prepare(`
     INSERT INTO battles (prize, minutes, max_players, winners_count, blanks_count, status,
-      created_by, created_by_name, ends_at, created_at, password)
-    VALUES (?,?,?,?,?, 'lobby', ?,?,?,?,?)
+      created_by, created_by_name, ends_at, created_at, password, chat_id)
+    VALUES (?,?,?,?,?, 'lobby', ?,?,?,?,?,?)
   `).run(input.prize.trim(), input.minutes, input.maxPlayers, input.winnersCount, input.blanksCount,
-    user.id, user.name, endsAt, now(), password || null);
+    user.id, user.name, endsAt, now(), password || null, chatId);
   const battleId = info.lastInsertRowid;
   ensureUser(user);
   db.prepare('INSERT INTO players (battle_id, user_id, name, join_order) VALUES (?,?,?,0)')
     .run(battleId, user.id, user.name);
   addLog(battleId, `${user.name} создаёт битву и занимает место за столом.`, 'sys');
+  syncChat(battleId);
   return getBattle(battleId);
 }
 
@@ -137,6 +148,7 @@ function joinBattle(user, battleId, password) {
     .run(battleId, user.id, user.name, count);
   addLog(battleId, `${user.name} садится за стол.`, 'sys');
   if (count + 1 >= battle.max_players) startBattle(battleId);
+  else syncChat(battleId);
   return getBattle(battleId);
 }
 
@@ -147,6 +159,7 @@ function startBattle(battleId) {
   if (players.length < MIN_PLAYERS) {
     db.prepare("UPDATE battles SET status='cancelled' WHERE id=?").run(battleId);
     addLog(battleId, 'Недостаточно игроков — битва отменена.', 'sys');
+    syncChat(battleId);
     return;
   }
   const live = players.length;
@@ -165,6 +178,7 @@ function startBattle(battleId) {
   if (players.length <= FINAL_DUEL_SIZE) {
     notify.yourTurn(battleId, starter.user_id).catch(() => {});
   }
+  syncChat(battleId);
 }
 
 // Разрешает все просроченные лобби (вызывается по таймеру)
@@ -232,6 +246,7 @@ function checkTurnTimeouts() {
     eliminate(battle.id, shooter.user_id, fresh);
     db.prepare('UPDATE battles SET remaining_place=? WHERE id=?').run(fresh - 1, battle.id);
     nextRandomShooter(battle.id);
+    syncChat(battle.id);
   }
 }
 
@@ -268,7 +283,7 @@ function performShot(battleId, shooterUserId, isSelf) {
   let target = shooter;
   if (!isSelf) {
     const others = getAlive(battleId).filter(p => p.user_id !== shooterUserId);
-    if (others.length === 0) { finishIfOneLeft(battleId); return getBattle(battleId); }
+    if (others.length === 0) { finishIfOneLeft(battleId); syncChat(battleId); return getBattle(battleId); }
     target = pick(others);
   }
   const round = drawRound(battle);
@@ -291,6 +306,7 @@ function performShot(battleId, shooterUserId, isSelf) {
     db.prepare('UPDATE battles SET remaining_place=? WHERE id=?').run(fresh - 1, battleId);
     nextRandomShooter(battleId);
   }
+  syncChat(battleId);
   return getBattle(battleId);
 }
 
@@ -329,6 +345,8 @@ function getBattle(battleId) {
     blanksCount: battle.blanks_count,
     status: battle.status,
     hasPassword: !!battle.password,
+    chatId: battle.chat_id,
+    chatMessageId: battle.chat_message_id,
     createdBy: battle.created_by,
     createdByName: battle.created_by_name,
     turnUserId: battle.turn_user_id,

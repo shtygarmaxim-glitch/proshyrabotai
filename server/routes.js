@@ -81,6 +81,11 @@ function buildRouter() {
     res.json(Object.assign({
       isOwner: admin.isOwner(req.user),
       canCreate: admin.isAllowed(req.user),
+      // Серверное время момента ответа — клиент использует его, чтобы вычислить
+      // расхождение со своими часами (или задержку сети) и не полагаться на
+      // "голый" Date.now() у себя, где таймер иначе может стартовать не с
+      // круглого числа и скакать неровно. См. использование в public/index.html.
+      now: Date.now(),
     }, profile));
   });
 

@@ -165,7 +165,7 @@ if(!res.ok)throw new Error(data.error||'Ошибка сервера');
 return data;
 }
 let state={tab:'create',openBattleId:null,modalOpen:false,battles:[],profile:null,err:null,
-profileTab:'overview',createForm: {prize:'',minutes:2,max:5,winners:1,blanks:10,password:''},
+profileTab:'overview',createForm: {prize:'',chatId:'',minutes:2,max:5,winners:1,blanks:10,password:''},
 isOwner:false,canCreate:false,allowedList:[],
 prevStatus:{},autoOpened:new Set(),joinPasswords:{},
 currentQuote: getRandomQuote()};
@@ -565,6 +565,7 @@ return wrap;
 }
 const CREATE_FIELDS=[
 {id:'f-prize',key:'prize',type:'text'},
+{id:'f-chat',key:'chatId',type:'text'},
 {id:'f-minutes',key:'minutes',type:'number'},
 {id:'f-max',key:'max',type:'number'},
 {id:'f-winners',key:'winners',type:'number'},
@@ -572,7 +573,7 @@ const CREATE_FIELDS=[
 {id:'f-password',key:'password',type:'text'},
 ];
 function resetCreateForm(){
-state.createForm={prize:'',minutes:2,max:5,winners:1,blanks:10,password:''};
+state.createForm={prize:'',chatId:'',minutes:2,max:5,winners:1,blanks:10,password:''};
 }
 function renderAdmin(){
 const wrap=document.createElement('div');
@@ -626,6 +627,8 @@ const overlay=document.createElement('div');overlay.className='overlay';
 const modal=document.createElement('div');modal.className='modal';
 modal.innerHTML=`<h3>НОВАЯ БИТВА</h3>
 <div class="field"><label>Приз</label><input id="f-prize" placeholder="500⭐, промокод, Nitro..." value="${f.prize}"></div>
+<div class="field"><label>Чат для битвы</label><input id="f-chat" placeholder="@username_группы или ID (-100...)" value="${f.chatId}">
+<div class="hint">Открытый чат, где бот — админ с правом закрепления. Там появится и будет обновляться сообщение боя.</div></div>
 <div class="field"><label>Старт через (минут)</label><input id="f-minutes" type="number" min="1" value="${f.minutes}"></div>
 <div class="field"><label>Макс. игроков</label><input id="f-max" type="number" min="2" value="${f.max}">
 <div class="hint">Минимум 2 игрока.</div></div>
@@ -644,6 +647,7 @@ overlay.appendChild(modal);
 const submit=async()=>{
 const data={
 prize: state.createForm.prize,
+chatId: state.createForm.chatId,
 minutes: parseInt(state.createForm.minutes||0),
 maxPlayers: parseInt(state.createForm.max||0),
 winnersCount: parseInt(state.createForm.winners||0),

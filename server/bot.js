@@ -78,7 +78,13 @@ function createBot(botToken, publicUrl) {
         game.shootOther(user, battleId);
       }
       await ctx.answerCallbackQuery({ text: mode === 'self' ? '🔫 Выстрелил в себя.' : '🎯 Выстрелил в другого.' });
-      await ctx.editMessageReplyMarkup().catch(() => {});
+      // Само боевое сообщение (текст + клавиатура — новый ход/новые кнопки)
+      // уже обновляется через game.shootSelf/shootOther -> broadcast.sync,
+      // так что здесь больше НЕ трогаем клавиатуру вручную: раньше был
+      // отдельный ctx.editMessageReplyMarkup() без аргументов, который снимал
+      // клавиатуру целиком — он выполнялся асинхронно и мог обогнать/перебить
+      // тот самый sync с уже правильными новыми кнопками, из-за чего кнопки
+      // после выстрела иногда пропадали насовсем, до следующего события боя.
     } catch (err) {
       await ctx.answerCallbackQuery({ text: err.message, show_alert: true });
     }

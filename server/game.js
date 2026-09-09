@@ -15,6 +15,15 @@ const SELF_SHOT_CHANCE = 0.10; // 10% в себя, 90% в другого
 // Когда живых игроков остаётся FINAL_DUEL_SIZE (2) — барабан больше не стреляет
 // сам, и решение "в себя / в другого" принимают сами игроки кнопками.
 const FINAL_DUEL_SIZE = 2;
+// В финале с начала хода нужно подождать SHOOT_COOLDOWN_MS, прежде чем можно
+// стрелять — и в мини-апе, и кнопками в чате (обе точки входа проверяются
+// здесь же, в performShot/shootSelf/shootOther, так что правило одно на
+// двоих). Это же защищает от лагов при спаме: раньше каждый клик "в себя"
+// сразу бил по БД и дёргал редактирование сообщения в Telegram (у которого
+// свои лимиты на частоту), и при быстром спаме это всё вставало в очередь и
+// тормозило. Теперь преждевременный клик отклоняется ДО performShot — никакой
+// лишней записи в БД и никакого лишнего edit-запроса в Telegram не происходит.
+const SHOOT_COOLDOWN_MS = 5000;
 
 // Аватарки-аксессуары: ключ -> сколько сыгранных (завершённых) битв нужно, чтобы разблокировать.
 // 'default' доступна всем сразу. Файлы лежат в public/avatars/<key>.png
@@ -280,6 +289,16 @@ function assertMyTurn(battle, user) {
   if (battle.turn_user_id !== user.id) throw new Error('Сейчас не твой ход.');
 }
 
+// Только для финала: нельзя стрелять раньше, чем через SHOOT_COOLDOWN_MS
+// после начала хода — ни из мини-апа, ни кнопкой в чате.
+function assertShootCooldown(battle) {
+  const elapsed = now() - (battle.turn_started_at || 0);
+  if (elapsed < SHOOT_COOLDOWN_MS) {
+    const waitSec = Math.ceil((SHOOT_COOLDOWN_MS - elapsed) / 1000);
+    throw new Error(`Подожди ещё ${waitSec} сек, прежде чем стрелять.`);
+  }
+}
+
 // Общая логика одного выстрела — используется и ручными кнопками (финал), и автострельбой.
 function performShot(battleId, shooterUserId, isSelf) {
   const battle = db.prepare('SELECT * FROM battles WHERE id=?').get(battleId);
@@ -321,6 +340,7 @@ function shootSelf(user, battleId) {
   if (!battle) throw new Error('Битва не найдена.');
   assertMyTurn(battle, user);
   if (getAlive(battleId).length > FINAL_DUEL_SIZE) throw new Error('Пока не финал — барабан стреляет сам.');
+  assertShootCooldown(battle);
   return performShot(battleId, user.id, true);
 }
 
@@ -329,6 +349,7 @@ function shootOther(user, battleId) {
   if (!battle) throw new Error('Битва не найдена.');
   assertMyTurn(battle, user);
   if (getAlive(battleId).length > FINAL_DUEL_SIZE) throw new Error('Пока не финал — барабан стреляет сам.');
+  assertShootCooldown(battle);
   return performShot(battleId, user.id, false);
 }
 
@@ -363,6 +384,7 @@ function getBattle(battleId) {
     turnStartedAt: battle.turn_started_at,
     turnTimeoutMs: TURN_TIMEOUT_MS,
     autoShootMs: AUTO_SHOOT_INTERVAL_MS,
+    shootCooldownMs: SHOOT_COOLDOWN_MS,
     finalDuelSize: FINAL_DUEL_SIZE,
     aliveCount: db.prepare('SELECT COUNT(*) c FROM players WHERE battle_id=? AND alive=1').get(battleId).c,
     endsAt: battle.ends_at,
@@ -404,7 +426,7 @@ function getProfile(user) {
 }
 
 module.exports = {
-  MIN_PLAYERS, MIN_BLANKS, AVATARS, FINAL_DUEL_SIZE, AUTO_SHOOT_INTERVAL_MS,
+  MIN_PLAYERS, MIN_BLANKS, AVATARS, FINAL_DUEL_SIZE, AUTO_SHOOT_INTERVAL_MS, SHOOT_COOLDOWN_MS,
   createBattle, joinBattle, resolveExpiredLobbies, tickLobbyCountdowns, checkTurnTimeouts, autoShootTick,
   shootSelf, shootOther, getBattle, listBattles, getProfile, setAvatar,
 };

@@ -3,7 +3,11 @@ const notify = require('./notify');
 const broadcast = require('./broadcast');
 
 const MIN_PLAYERS = 2;
+const MAX_PLAYERS = 100;
 const MIN_BLANKS = 10;
+// Холостых патронов не может быть больше, чем в BLANKS_MULTIPLIER раз больше
+// макс. числа игроков (например, 20 игроков -> максимум 60 холостых).
+const BLANKS_MULTIPLIER = 3;
 // В финале (когда живых == FINAL_DUEL_SIZE) на каждый ход даётся 1 минута —
 // не выбрал "в себя"/"в другого" за это время, выбываешь автоматически.
 const TURN_TIMEOUT_MS = 60000;
@@ -112,9 +116,15 @@ function validateCreateInput({ prize, minutes, maxPlayers, winnersCount, blanksC
   if (!chatId || !String(chatId).trim()) return 'Укажи чат, в котором будет идти бой.';
   if (!Number.isFinite(minutes) || minutes < 1) return 'Минимум 1 минута до старта.';
   if (!Number.isFinite(maxPlayers) || maxPlayers < MIN_PLAYERS) return `Минимум ${MIN_PLAYERS} игрока.`;
+  if (maxPlayers > MAX_PLAYERS) return `Максимум ${MAX_PLAYERS} игроков.`;
   if (!Number.isFinite(winnersCount) || winnersCount < 1 || winnersCount >= maxPlayers)
     return 'Победителей должно быть меньше, чем макс. игроков.';
   if (!Number.isFinite(blanksCount) || blanksCount < MIN_BLANKS) return `Минимум ${MIN_BLANKS} холостых патронов.`;
+  // Верхняя граница растёт вместе с числом игроков (иначе барабан из 100
+  // человек с 10 холостыми выбивал бы почти всех за первый же круг) — но
+  // никогда не опускается ниже MIN_BLANKS, чтобы не запереть маленькие битвы.
+  const maxBlanks = Math.max(MIN_BLANKS, BLANKS_MULTIPLIER * maxPlayers);
+  if (blanksCount > maxBlanks) return `Холостых патронов должно быть не больше ${maxBlanks} (это ${BLANKS_MULTIPLIER}× от макс. игроков).`;
   return null;
 }
 
@@ -426,7 +436,7 @@ function getProfile(user) {
 }
 
 module.exports = {
-  MIN_PLAYERS, MIN_BLANKS, AVATARS, FINAL_DUEL_SIZE, AUTO_SHOOT_INTERVAL_MS, SHOOT_COOLDOWN_MS,
+  MIN_PLAYERS, MAX_PLAYERS, MIN_BLANKS, BLANKS_MULTIPLIER, AVATARS, FINAL_DUEL_SIZE, AUTO_SHOOT_INTERVAL_MS, SHOOT_COOLDOWN_MS,
   createBattle, joinBattle, resolveExpiredLobbies, tickLobbyCountdowns, checkTurnTimeouts, autoShootTick,
   shootSelf, shootOther, getBattle, listBattles, getProfile, setAvatar,
 };

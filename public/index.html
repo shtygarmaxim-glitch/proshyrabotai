@@ -82,15 +82,26 @@ border:2px solid var(--line);background:var(--panel-2);color:var(--text);cursor:
 .hist-row{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);padding:10px 12px;margin-bottom:8px;font-size:11px;}
 .place-pill{font-size:9.5px;padding:3px 7px;border:1px solid var(--amber);color:var(--amber);}
 .place-pill.lost{border-color:var(--line);color:var(--text-dim);}
-.table-wrap{position:relative;width:260px;height:260px;margin:14px auto 8px;}
-.seat{position:absolute;width:56px;transform:translate(-50%,-50%);text-align:center;}
-.seat .avatar{width:34px;height:34px;margin:0 auto 4px;}
-.seat .name{font-size:8.5px;color:var(--text-dim);word-break:break-word;}
+.table-wrap{margin:14px 0 8px;}
+.ammo-bar{display:flex;align-items:center;justify-content:center;gap:20px;flex-wrap:wrap;
+border:2px solid var(--line);background:radial-gradient(circle,var(--panel-2),var(--void));padding:10px 12px;margin-bottom:10px;}
+.table-scroll{overflow-x:auto;overflow-y:hidden;margin:0 -14px;padding:18px 14px 12px;-webkit-overflow-scrolling:touch;}
+.table-long{position:relative;height:104px;border:2px solid var(--line);border-radius:8px;
+background:repeating-linear-gradient(90deg,var(--panel) 0 30px, var(--panel-2) 30px 32px);}
+.table-hint{font-size:9px;color:var(--text-dim);text-align:center;margin-top:2px;letter-spacing:.4px;text-transform:uppercase;}
+.seat{position:absolute;width:50px;transform:translateX(-50%);text-align:center;}
+.seat.row-top{top:6px;}
+.seat.row-bottom{bottom:6px;}
+.seat .avatar{width:26px;height:26px;margin:0 auto 3px;}
+.seat .name{font-size:7.5px;color:var(--text-dim);word-break:break-word;line-height:1.25;}
 .seat.dead{opacity:.3;}
 .seat.dead .avatar{filter:grayscale(1);}
-.seat.turn .avatar{filter:drop-shadow(0 0 6px var(--red)) drop-shadow(0 0 6px var(--red));}
+.seat.turn{z-index:2;}
+.seat.turn .avatar{filter:drop-shadow(0 0 6px var(--red)) drop-shadow(0 0 7px var(--red));}
 .seat.turn .name{color:var(--red);}
-.table-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:112px;height:112px;border:2px solid var(--line);border-radius:50%;background:radial-gradient(circle,var(--panel-2),var(--void));display:flex;align-items:center;justify-content:center;flex-direction:column;}
+.seat-gun{font-size:15px;line-height:1;margin-bottom:1px;}
+.seat-gun.toss{animation:toss .55s ease;}
+@keyframes toss{0%{transform:scale(.3) rotate(-40deg);opacity:0;}55%{transform:scale(1.35) rotate(10deg);opacity:1;}100%{transform:scale(1) rotate(0);}}
 .cyl-count{font-family:var(--font-body);font-size:10.5px;text-align:center;line-height:2;}
 .cyl-count .num{font-family:var(--font-display);font-size:13px;margin-right:5px;}
 .cyl-count .v-live{color:var(--red);text-shadow:0 0 6px rgba(230,57,70,.5);}
@@ -172,6 +183,7 @@ let state={tab:'create',openBattleId:null,modalOpen:false,battles:[],profile:nul
 profileTab:'overview',createForm: {prize:'',chatId:'',minutes:2,max:5,winners:1,blanks:10,password:''},
 isOwner:false,canCreate:false,allowedList:[],
 prevStatus:{},autoOpened:new Set(),joinPasswords:{},
+prevTurnUserId:{},turnAnimUntil:{},lastScrolledTurn:{},
 focusBattleId:FOCUS_BATTLE_ID,focusBattleDone:false,
 currentQuote: getRandomQuote(),clockOffset:0};
 let pollTimer=null;
@@ -220,6 +232,13 @@ state.autoOpened.add(b.id);
 autoJump=true;
 }
 state.prevStatus[b.id]=b.status;
+// Ход перешёл к другому игроку — на полсекунды помечаем, чтобы пистолет
+// на месте нового держателя "прилетел" анимацией, а не просто появился.
+const prevTurn=state.prevTurnUserId[b.id];
+if(b.status==='playing'&&b.turnUserId&&prevTurn!==undefined&&prevTurn!==b.turnUserId){
+state.turnAnimUntil[b.id]=Date.now()+600;
+}
+state.prevTurnUserId[b.id]=b.turnUserId;
 });
 state.battles=battles;state.profile=profile;
 state.isOwner=!!profile.isOwner;state.canCreate=!!profile.canCreate;
@@ -287,6 +306,17 @@ const newLog=content.querySelector('.log');
 if(newLog){
 if(logWasAtBottom)newLog.scrollTop=newLog.scrollHeight;
 else newLog.scrollTop=Math.min(prevLogScrollTop,newLog.scrollHeight);
+}
+// Стол теперь длинный и может не помещаться на экране — при открытии боя и
+// при каждой смене хода сам докручиваем его так, чтобы держатель пистолета
+// был виден, а не заставляем листать вручную, чтобы его найти.
+const turnSeat=content.querySelector('.seat.turn');
+if(turnSeat&&state.openBattleId){
+const seatKey=turnSeat.getAttribute('data-user-id');
+if(state.lastScrolledTurn[state.openBattleId]!==seatKey){
+turnSeat.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});
+state.lastScrolledTurn[state.openBattleId]=seatKey;
+}
 }
 });
 }
@@ -460,28 +490,46 @@ wrap.insertAdjacentHTML('beforeend',`<div class="prize" style="margin-bottom:10p
 const secsLeft=(b.status==='playing'&&b.turnStartedAt)
 ? Math.max(0,Math.ceil((b.turnTimeoutMs-(nowMs()-b.turnStartedAt))/1000)) : null;
 const tw=document.createElement('div');tw.className='table-wrap';
-const n=b.players.length,radius=105;
+const ammo=document.createElement('div');ammo.className='ammo-bar';
+ammo.innerHTML=b.status==='playing'
+? `<div class="cyl-count"><span class="v-live"><span class="num">${b.liveLeft}</span>боевых</span></div>
+<div class="cyl-count"><span class="v-blank"><span class="num">${b.blankLeft}</span>холостых</span></div>
+<div class="cyl-total">Всего: ${b.liveLeft+b.blankLeft}</div>`
+: `<div class="cyl-count" style="color:var(--amber)">БОЙ ОКОНЧЕН</div>`;
+tw.appendChild(ammo);
+// Длинный стол: игроки рассажены в два ряда (верх/низ), стол прокручивается
+// по горизонтали — так он не разваливается при большом числе игроков
+// (раньше все аватарки лепились по кругу и при 20+ игроках налезали друг на
+// друга). Прокрутка к текущему держателю пистолета — автоматом, в render().
+const scrollWrap=document.createElement('div');scrollWrap.className='table-scroll';
+const n=b.players.length;
+const perRow=Math.max(1,Math.ceil(n/2));
+const SEAT_GAP=60;
+const tableWidth=Math.max(perRow*SEAT_GAP+30,280);
+const table=document.createElement('div');table.className='table-long';
+table.style.width=tableWidth+'px';
 b.players.forEach((p,i)=>{
-const angle=(i*(360/n)-90)*Math.PI/180;
-const x=130+radius*Math.cos(angle),y=130+radius*Math.sin(angle);
+const inTop=i<perRow;
+const col=inTop?i:(i-perRow);
+const x=SEAT_GAP/2+15+col*SEAT_GAP;
 const seat=document.createElement('div');
-seat.className='seat'+(!p.alive?' dead':'')+(b.turnUserId===p.user_id?' turn':'');
-seat.style.left=x+'px';seat.style.top=y+'px';
+const hasGun=b.turnUserId===p.user_id;
+seat.className='seat '+(inTop?'row-top':'row-bottom')+(!p.alive?' dead':'')+(hasGun?' turn':'');
+seat.style.left=x+'px';
+seat.setAttribute('data-user-id',p.user_id);
 const isMe=p.user_id===ME_ID;
-const turnTag=b.turnUserId===p.user_id ? ` 🔫${secsLeft!=null?' '+secsLeft+'с':''}` : '';
-seat.innerHTML=`<div class="av"></div><div class="name">${p.name}${isMe?' (ты)':''}${turnTag}</div>`;
-seat.querySelector('.av').appendChild(avatarImg(p.avatar,34));
-tw.appendChild(seat);
+const justTossed=hasGun&&state.turnAnimUntil[b.id]&&nowMs()<state.turnAnimUntil[b.id];
+const gunHtml=hasGun?`<div class="seat-gun${justTossed?' toss':''}">🔫</div>`:'';
+seat.innerHTML=`${gunHtml}<div class="av"></div><div class="name">${p.name}${isMe?' (ты)':''}</div>`;
+seat.querySelector('.av').appendChild(avatarImg(p.avatar,26));
+table.appendChild(seat);
 });
-const center=document.createElement('div');center.className='table-center';
-center.innerHTML=b.status==='playing'
-? `<div class="cyl-count">
-<div class="v-live"><span class="num">${b.liveLeft}</span>боевых</div>
-<div class="v-blank"><span class="num">${b.blankLeft}</span>холостых</div>
-<div class="cyl-total">Всего: ${b.liveLeft+b.blankLeft}</div>
-</div>`
-: `<div class="cyl-count" style="color:var(--amber)">БОЙ<br>ОКОНЧЕН</div>`;
-tw.appendChild(center);
+scrollWrap.appendChild(table);
+tw.appendChild(scrollWrap);
+if(n>6){
+const hint=document.createElement('div');hint.className='table-hint';hint.textContent='← листай стол, чтобы увидеть всех →';
+tw.appendChild(hint);
+}
 wrap.appendChild(tw);
 const log=document.createElement('div');log.className='log';
 b.log.forEach(l=>{const d=document.createElement('div');d.className=l.cls;d.textContent='> '+l.text;log.appendChild(d);});
@@ -683,12 +731,12 @@ modal.innerHTML=`<h3>НОВАЯ БИТВА</h3>
 <div class="field"><label>Чат для битвы</label><input id="f-chat" placeholder="@username_группы или ID (-100...)" value="${f.chatId}">
 <div class="hint">Открытый чат, где бот — админ с правом закрепления. Там появится и будет обновляться сообщение боя.</div></div>
 <div class="field"><label>Старт через (минут)</label><input id="f-minutes" type="number" min="1" value="${f.minutes}"></div>
-<div class="field"><label>Макс. игроков</label><input id="f-max" type="number" min="2" value="${f.max}">
-<div class="hint">Минимум 2 игрока.</div></div>
+<div class="field"><label>Макс. игроков</label><input id="f-max" type="number" min="2" max="100" value="${f.max}">
+<div class="hint">От 2 до 100 игроков.</div></div>
 <div class="field"><label>Количество победителей</label><input id="f-winners" type="number" min="1" value="${f.winners}">
 <div class="hint">Должно быть меньше макс. игроков.</div></div>
 <div class="field"><label>Холостых патронов</label><input id="f-blanks" type="number" min="10" value="${f.blanks}">
-<div class="hint">Минимум 10. Боевых будет столько же, сколько игроков.</div></div>
+<div class="hint" id="f-blanks-hint">Минимум 10, максимум ${Math.max(10,(parseInt(f.max)||0)*3)} (3× от макс. игроков). Боевых будет столько же, сколько игроков.</div></div>
 <div class="field"><label>Пароль (необязательно)</label><input id="f-password" placeholder="оставь пустым — вход для всех" value="${f.password}">
 <div class="hint">Если указать пароль, войти в битву смогут только те, кто его знает.</div></div>
 <div class="err" id="f-err"></div>
@@ -716,7 +764,12 @@ await refresh();
 };
 CREATE_FIELDS.forEach((fld,idx)=>{
 const input=modal.querySelector('#'+fld.id);
-input.oninput=()=>{state.createForm[fld.key]=input.value;};
+input.oninput=()=>{state.createForm[fld.key]=input.value;
+if(fld.key==='max'){
+const hint=modal.querySelector('#f-blanks-hint');
+if(hint)hint.textContent=`Минимум 10, максимум ${Math.max(10,(parseInt(input.value)||0)*3)} (3× от макс. игроков). Боевых будет столько же, сколько игроков.`;
+}
+};
 input.onkeydown=(e)=>{
 if(e.key!=='Enter')return;
 e.preventDefault();

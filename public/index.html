@@ -497,11 +497,22 @@ if(b.turnUserId===ME_ID){
 const timer=document.createElement('div');timer.className='turn-timer';
 timer.textContent=`⏱ ФИНАЛ. ${secsLeft} сек на выбор — не успел, выбываешь`;
 wrap.appendChild(timer);
+// Первые shootCooldownMs (5 сек) после начала хода кнопки заблокированы —
+// и в мини-апе, и в чате (там это проверяет тот же game.js на сервере).
+// Это защита от спама: если долбить "в себя" без паузы, бот раньше не
+// успевал за редактированиями сообщения в Telegram и начинал лагать.
+const cooldownMs=b.shootCooldownMs||5000;
+const cooldownLeft=b.turnStartedAt ? Math.max(0,Math.ceil((cooldownMs-(nowMs()-b.turnStartedAt))/1000)) : 0;
 const controls=document.createElement('div');controls.style.marginTop='0';controls.className='btn-row';
 const selfBtn=document.createElement('button');selfBtn.className='btn btn-primary';selfBtn.style.flex='1';
-selfBtn.textContent='В СЕБЯ';selfBtn.onclick=()=>act(()=>api(`/battles/${b.id}/shoot-self`,{method:'POST'}));
 const otherBtn=document.createElement('button');otherBtn.className='btn btn-cyan';otherBtn.style.flex='1';
+if(cooldownLeft>0){
+selfBtn.disabled=true;otherBtn.disabled=true;
+selfBtn.textContent=otherBtn.textContent=`ПОДОЖДИ ${cooldownLeft}с`;
+}else{
+selfBtn.textContent='В СЕБЯ';selfBtn.onclick=()=>act(()=>api(`/battles/${b.id}/shoot-self`,{method:'POST'}));
 otherBtn.textContent='В ДРУГОГО';otherBtn.onclick=()=>act(()=>api(`/battles/${b.id}/shoot-other`,{method:'POST'}));
+}
 controls.appendChild(selfBtn);controls.appendChild(otherBtn);wrap.appendChild(controls);
 }else{
 const wait=document.createElement('div');wait.className='empty';wait.style.marginTop='12px';

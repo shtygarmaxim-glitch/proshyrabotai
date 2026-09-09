@@ -119,8 +119,7 @@ function renderLobbyMessage(battle, frozen) {
   }
 
   if (!frozen) {
-    const names = battle.players.map((p) => escapeHtml(p.name)).join(', ');
-    lines.push(`За столом: ${names || '—'}`);
+    lines.push(battle.players.length ? 'Все, кто вступил, уже сидят за столом.' : 'Стол пока пуст.');
   }
 
   return lines.filter((l) => l !== undefined).join('\n');

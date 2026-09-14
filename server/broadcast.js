@@ -182,6 +182,53 @@ function renderGameMessage(battle) {
   return lines.filter((l) => l !== undefined).join('\n');
 }
 
+// ---------- Сообщение "История" (полный лог одним растущим сообщением) ----------
+// Отдельное от карточки боя и от сообщений хода сообщение: публикуется один
+// раз (сразу после стартового уведомления), и дальше просто редактируется —
+// дописывается на каждое новое событие боя. Так весь лог всегда виден одним
+// сообщением, без дублирования по десяткам отдельных сообщений хода.
+function renderLogMessage(battle) {
+  const logs = battle.log || [];
+  const lines = [];
+  lines.push('📜 <b>История</b>');
+  lines.push('<i>Тут видно, кто и в кого стрелял.</i>');
+  lines.push('');
+  const body = logs.length ? logs.map((l) => escapeHtml(l.text)).join('\n\n') : '…';
+  lines.push(`<blockquote expandable>${body}</blockquote>`);
+  return lines.join('\n');
+}
+
+// Своя очередь на битву — редактирования "Истории" сериализуем отдельно от
+// карточки/лобби, чтобы частые события боя (каждый выстрел) не толкались с
+// редактированиями других сообщений в общей очереди ниже.
+const logChains = new Map();
+
+function syncLog(battle) {
+  if (!botRef || !battle || !battle.chatId) return Promise.resolve();
+  const prevChain = logChains.get(battle.id) || Promise.resolve();
+  const nextChain = prevChain.then(() => doSyncLog(battle)).catch(() => {});
+  logChains.set(battle.id, nextChain);
+  return nextChain;
+}
+
+async function doSyncLog(battle) {
+  const text = renderLogMessage(battle);
+  let messageId = battle.chatLogMessageId ? Number(battle.chatLogMessageId) : null;
+  try {
+    if (!messageId) {
+      const msg = await botRef.api.sendMessage(battle.chatId, text, { parse_mode: 'HTML' });
+      messageId = msg.message_id;
+      db.prepare('UPDATE battles SET chat_log_message_id=? WHERE id=?').run(String(messageId), battle.id);
+    } else {
+      await botRef.api.editMessageText(battle.chatId, messageId, text, { parse_mode: 'HTML' });
+    }
+  } catch (err) {
+    if (!/message is not modified/i.test(err.message)) {
+      console.error(`broadcast: не удалось обновить "Историю" битвы ${battle.id}:`, err.message);
+    }
+  }
+}
+
 // Простая очередь на битву, чтобы редактирования одного и того же сообщения
 // применялись строго по порядку, даже если несколько событий боя (авто-выстрел,
 // таймаут хода, чей-то join) прилетели почти одновременно.
@@ -345,11 +392,11 @@ async function resolveTurn(battle, resultText) {
   }
 }
 
-// Простое одноразовое уведомление в чат в момент старта боя ("барабан
-// заряжен, погнали") — отдельное новое сообщение, ничего дальше не правит.
+// Простое одноразовое уведомление в чат в момент старта боя — отдельное
+// новое сообщение, ничего дальше не правит.
 async function announceLoaded(battle) {
   if (!botRef || !battle || !battle.chatId) return;
-  const text = `🔫 Барабан заряжен: ${battle.players.length} боевых / ${battle.blanksCount} холостых. Погнали!`;
+  const text = 'Пистолет заряжен, начинаем.';
   try {
     await botRef.api.sendMessage(battle.chatId, text, { parse_mode: 'HTML' });
   } catch (err) {
@@ -387,4 +434,4 @@ async function assertUsableChat(chatId) {
   return chat;
 }
 
-module.exports = { init, sync, assertUsableChat, announceTurn, resolveTurn, announceLoaded };
+module.exports = { init, sync, assertUsableChat, announceTurn, resolveTurn, announceLoaded, syncLog };

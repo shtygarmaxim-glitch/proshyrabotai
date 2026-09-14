@@ -15,6 +15,13 @@ const TURN_TIMEOUT_MS = 60000;
 // раз в AUTO_SHOOT_INTERVAL_MS, с шансом SELF_SHOT_CHANCE выстрелить в себя
 // (иначе — в случайного другого живого игрока).
 const AUTO_SHOOT_INTERVAL_MS = 5000;
+// Пауза между стартом боя (набрались игроки) и первым реальным ходом. Нужна,
+// чтобы чат успел ДОСЛАТЬ стартовую пачку сообщений (боевая карточка,
+// "Пистолет заряжен", "История") прежде чем начнётся реальный отсчёт хода —
+// иначе бой в БД (и в мини-апе) убегает вперёд, пока Telegram ещё
+// отправляет/редактирует предыдущие сообщения, и в чате всё выглядит так,
+// будто бой "перепрыгнул" сразу к финалу. См. startBattle/announceChatStart.
+const START_DELAY_MS = 10000;
 const SELF_SHOT_CHANCE = 0.10; // 10% в себя, 90% в другого
 // Когда живых игроков остаётся FINAL_DUEL_SIZE (2) — барабан больше не стреляет
 // сам, и решение "в себя / в другого" принимают сами игроки кнопками.
@@ -186,11 +193,14 @@ function startBattle(battleId) {
   const blanks = battle.blanks_count;
   const chamber = shuffle(Array(live).fill('live').concat(Array(blanks).fill('blank')));
   const starter = pick(players);
+  // turn_started_at выставляем не на "сейчас", а на "сейчас + START_DELAY_MS":
+  // право стрелять формально уже закреплено за starter, но автовыстрелы и
+  // таймаут финала (которые отсчитываются от turn_started_at) не начнут
+  // тикать раньше, чем истечёт стартовая пауза — см. START_DELAY_MS выше.
   db.prepare(`
     UPDATE battles SET status='playing', chamber=?, turn_user_id=?, turn_started_at=?, remaining_place=? WHERE id=?
-  `).run(JSON.stringify(chamber), starter.user_id, now(), players.length, battleId);
+  `).run(JSON.stringify(chamber), starter.user_id, now() + START_DELAY_MS, players.length, battleId);
   addLog(battleId, `Барабан заряжен: ${live} боевых / ${blanks} холостых.`, 'sys');
-  addLog(battleId, `Право стрелять получает ${starter.name}.`, 'sys');
 
   notify.battleStarted(battle, players, starter.name).catch(() => {});
   // Если игроков ровно FINAL_DUEL_SIZE — битва стартует сразу в "финальном" режиме.
@@ -201,14 +211,22 @@ function startBattle(battleId) {
 
 // Публикует в чат отдельное стартовое уведомление ("Пистолет заряжен,
 // начинаем."), следом — сообщение "История" (пока с тем, что уже есть в
-// логе — "Барабан заряжен...", "Право стрелять получает..."), и только потом
-// сообщение самого первого хода. Вызывается ровно один раз, сразу после того,
-// как карточка боя уже создана/закреплена (syncChat) — три сообщения идут
-// строго друг за другом (через .then()), чтобы порядок в чате не перепутался.
+// логе — только "Барабан заряжен..."). Дальше — стартовая пауза START_DELAY_MS:
+// даём чату время реально ДОСЛАТЬ эту пачку сообщений (карточка боя уже
+// отправлена в syncChat до вызова этой функции), прежде чем в чате появится
+// "Право стрелять получает...". Ровно тем же моментом (start + START_DELAY_MS)
+// помечен turn_started_at в БД (см. startBattle), так что автовыстрелы не
+// обгонят это сообщение — бой в мини-апе и в чате стартуют синхронно.
 function announceChatStart(battleId, starterName) {
   const loaded = broadcast.announceLoaded(getBattle(battleId)).catch(() => {});
   const logged = loaded.then(() => broadcast.syncLog(getBattle(battleId)).catch(() => {}));
-  logged.then(() => broadcast.announceTurn(getBattle(battleId), starterName, 'first').catch(() => {}));
+  logged.then(() => {
+    setTimeout(() => {
+      addLog(battleId, `Право стрелять получает ${starterName}.`, 'sys');
+      broadcast.syncLog(getBattle(battleId)).catch(() => {});
+      broadcast.announceTurn(getBattle(battleId), starterName, 'first').catch(() => {});
+    }, START_DELAY_MS);
+  });
 }
 
 // Правит текущее "открытое" сообщение хода в результат выстрела, а следом —
@@ -490,7 +508,7 @@ function getProfile(user) {
 }
 
 module.exports = {
-  MIN_PLAYERS, MAX_PLAYERS, MIN_BLANKS, BLANKS_MULTIPLIER, AVATARS, FINAL_DUEL_SIZE, AUTO_SHOOT_INTERVAL_MS, SHOOT_COOLDOWN_MS,
+  MIN_PLAYERS, MAX_PLAYERS, MIN_BLANKS, BLANKS_MULTIPLIER, AVATARS, FINAL_DUEL_SIZE, AUTO_SHOOT_INTERVAL_MS, SHOOT_COOLDOWN_MS, START_DELAY_MS,
   createBattle, joinBattle, resolveExpiredLobbies, tickLobbyCountdowns, checkTurnTimeouts, autoShootTick,
   shootSelf, shootOther, getBattle, listBattles, getProfile, setAvatar,
 };

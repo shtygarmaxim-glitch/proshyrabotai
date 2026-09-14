@@ -115,7 +115,12 @@ function renderLobbyMessage(battle, frozen) {
   }
 
   if (!frozen) {
-    lines.push(battle.players.length ? 'Все, кто вступил, уже сидят за столом.' : 'Стол пока пуст.');
+    if (battle.players.length) {
+      lines.push('<b>Пилоты:</b>');
+      for (const p of battle.players) lines.push(escapeHtml(p.name));
+    } else {
+      lines.push('Стол пока пуст.');
+    }
   }
 
   return lines.filter((l) => l !== undefined).join('\n');

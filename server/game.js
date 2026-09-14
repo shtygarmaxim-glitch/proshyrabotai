@@ -203,8 +203,6 @@ function startBattle(battleId) {
   addLog(battleId, `Барабан заряжен: ${live} боевых / ${blanks} холостых.`, 'sys');
 
   notify.battleStarted(battle, players, starter.name).catch(() => {});
-  // Если игроков ровно FINAL_DUEL_SIZE — битва стартует сразу в "финальном" режиме.
-  maybeAnnounceFinal(battleId);
   syncChat(battleId);
   announceChatStart(battleId, starter.name);
 }
@@ -217,6 +215,10 @@ function startBattle(battleId) {
 // "Право стрелять получает...". Ровно тем же моментом (start + START_DELAY_MS)
 // помечен turn_started_at в БД (см. startBattle), так что автовыстрелы не
 // обгонят это сообщение — бой в мини-апе и в чате стартуют синхронно.
+// Сюда же (а не в startBattle) перенесена проверка "а не финал ли это сразу"
+// (maybeAnnounceFinal) — если битва стартует сразу с FINAL_DUEL_SIZE игроков,
+// ЛС "☠️ ФИНАЛ!" тоже должно приходить не раньше, чем игрок реально увидит
+// первый ход в чате, а не в момент, когда игра ещё "невидимо" стартовала.
 function announceChatStart(battleId, starterName) {
   const loaded = broadcast.announceLoaded(getBattle(battleId)).catch(() => {});
   const logged = loaded.then(() => broadcast.syncLog(getBattle(battleId)).catch(() => {}));
@@ -225,6 +227,7 @@ function announceChatStart(battleId, starterName) {
       addLog(battleId, `Право стрелять получает ${starterName}.`, 'sys');
       broadcast.syncLog(getBattle(battleId)).catch(() => {});
       broadcast.announceTurn(getBattle(battleId), starterName, 'first').catch(() => {});
+      maybeAnnounceFinal(battleId);
     }, START_DELAY_MS);
   });
 }

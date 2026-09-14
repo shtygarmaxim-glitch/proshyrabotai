@@ -15,8 +15,12 @@ const db = require('./db');
 //     сообщение просто редактируется на текст отмены, новое сообщение при
 //     этом не публикуется вообще.
 //  2) "Боевое" сообщение (chat_game_message_id) — публикуется НОВЫМ
-//     сообщением в момент старта боя, и вот его уже закрепляем. Дальше именно
-//     его редактируем всю игру: лог, текущий ход, патроны, результат.
+//     сообщением на КАЖДОЕ событие боя (старт, каждый выстрел, авто-выбывание
+//     по таймауту, финиш) — не редактируется, а именно пересылается заново,
+//     чтобы вся хронология боя была видна в чате отдельными репликами, а не
+//     терялась в правках одного и того же сообщения. Закрепляем только самое
+//     первое такое сообщение (момент реального старта боя) — дальше открепляем
+//     его же по завершении.
 //
 // Инициализируется один раз из index.js после создания бота — до этого все
 // функции молча ничего не делают.
@@ -94,6 +98,12 @@ function chatDisplay(battle) {
   return battle.chatLink ? `<a href="${escapeAttr(battle.chatLink)}">${title}</a>` : title;
 }
 
+// Красиво перечисляет имена через запятую, а перед последним — "и".
+function joinNames(names) {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} и ${names[names.length - 1]}`;
+}
+
 // ---------- Лобби-сообщение (набор игроков) ----------
 // frozen=true — финальная версия после старта боя: без обратного отсчёта,
 // списка игроков и клавиатуры, просто короткая пометка, что бой начался.
@@ -143,7 +153,10 @@ function buildLobbyKeyboard(battle) {
   return kb.inline_keyboard.length ? kb : undefined;
 }
 
-// ---------- Боевое сообщение (сам бой) ----------
+// ---------- Боевое сообщение (каждый выстрел/ход — НОВЫМ сообщением) ----------
+// Публикуется заново на каждое событие боя (старт, каждый выстрел, выбывание
+// по таймауту) — так лог не "съедается" правками одного и того же сообщения,
+// и в чате видно всю хронологию боя одной лентой, как отдельные реплики.
 function renderGameMessage(battle) {
   const lines = [];
   lines.push('🔫 <b>ПРОТОКОЛ: БАРАБАН</b>');
@@ -163,11 +176,14 @@ function renderGameMessage(battle) {
     lines.push(`<i>${escapeHtml(battle.createdByName)} Распорядитель битвы, все вопросы к нему.</i>`);
   }
 
-  if (battle.status === 'playing' && battle.turnUserId) {
+  if (battle.turnUserId) {
     const turnPlayer = battle.players.find((p) => p.user_id === battle.turnUserId);
     if (turnPlayer) lines.push(`Ход — <b>${escapeHtml(turnPlayer.name)}</b>`);
   }
 
+  // Последний ход — отдельной жирной строкой (это и есть событие, ради
+  // которого прислано это сообщение); всё, что было раньше — под спойлером
+  // "expandable", чтобы можно было пролистать историю, не листая сам чат.
   const logs = battle.log || [];
   if (logs.length) {
     lines.push('');
@@ -180,12 +196,48 @@ function renderGameMessage(battle) {
     lines.push(`<b>${escapeHtml(last.text)}</b>`);
   }
 
-  if (battle.status === 'finished') {
-    const winners = battle.players
-      .filter((p) => p.place && p.place <= battle.winnersCount)
-      .sort((a, b) => a.place - b.place)
-      .map((p) => escapeHtml(p.name));
-    if (winners.length) lines.push(`\n🏆 Приз забирает: ${winners.join(', ')}`);
+  return lines.filter((l) => l !== undefined).join('\n');
+}
+
+// ---------- Сообщение о начале финала (отдельным сообщением, один раз) ----------
+function renderFinalMessage(battle, finalists) {
+  const lines = [];
+  lines.push('🔥 <b>ФИНАЛ!</b>');
+  lines.push('');
+  const names = joinNames(finalists.map((p) => escapeHtml(p.name)));
+  lines.push(`В живых остал${finalists.length === 1 ? 'ся' : 'ись'} только: <b>${names}</b>.`);
+  lines.push('');
+  lines.push('Барабан больше не решает за игроков — теперь каждый сам выбирает,');
+  lines.push('стрелять <b>в себя</b> 🔫 или <b>в другого</b> 🎯. На ход — 1 минута,');
+  lines.push('не успел выбрать — выбываешь.');
+  return lines.join('\n');
+}
+
+// ---------- Итоговое сообщение (бой завершён) ----------
+function renderFinishMessage(battle) {
+  const lines = [];
+  lines.push('🏁 <b>БОЙ ЗАВЕРШЁН</b>');
+  lines.push('');
+
+  const info = [];
+  info.push(`<b>Приз — ${escapeHtml(battle.prize)}</b>`);
+  if (battle.chatTitle) info.push(`<b>Чат — ${chatDisplay(battle)}</b>`);
+  info.push(`<b>Игроки — ${battle.players.length}</b>`);
+  lines.push(`<blockquote>${info.join('\n')}</blockquote>`);
+  lines.push('');
+
+  const winners = battle.players
+    .filter((p) => p.place && p.place <= battle.winnersCount)
+    .sort((a, b) => a.place - b.place);
+  if (winners.length) {
+    for (const w of winners) lines.push(`<b>${escapeHtml(w.name)} — выжил.</b>`);
+    lines.push('');
+    lines.push(`🏆 Приз (${escapeHtml(battle.prize)}) забирает: <b>${joinNames(winners.map((w) => escapeHtml(w.name)))}</b>.`);
+  }
+
+  if (battle.createdByName) {
+    lines.push('');
+    lines.push(`<i>${escapeHtml(battle.createdByName)} Распорядитель битвы, все вопросы к нему.</i>`);
   }
 
   return lines.filter((l) => l !== undefined).join('\n');
@@ -240,32 +292,28 @@ async function syncLobby(battle, frozen) {
   }
 }
 
+// Публикует боевое сообщение НОВОЙ репликой в чате на каждый вызов (а не
+// редактирует старую) — так каждый ход/выстрел виден отдельной строкой в
+// истории чата, а не теряется в правках одного и того же сообщения.
 async function syncGame(battle) {
-  const text = renderGameMessage(battle);
+  const text = battle.status === 'finished' ? renderFinishMessage(battle) : renderGameMessage(battle);
   const keyboard = buildGameKeyboard(battle) || new InlineKeyboard();
-  let messageId = battle.chatGameMessageId ? Number(battle.chatGameMessageId) : null;
+  let messageId = null;
   try {
-    if (!messageId) {
-      const msg = await botRef.api.sendMessage(battle.chatId, text, {
-        parse_mode: 'HTML',
-        reply_markup: keyboard,
-      });
-      messageId = msg.message_id;
-      db.prepare('UPDATE battles SET chat_game_message_id=? WHERE id=?').run(String(messageId), battle.id);
-    } else {
-      await botRef.api.editMessageText(battle.chatId, messageId, text, {
-        parse_mode: 'HTML',
-        reply_markup: keyboard,
-      });
-    }
+    const msg = await botRef.api.sendMessage(battle.chatId, text, {
+      parse_mode: 'HTML',
+      reply_markup: keyboard,
+    });
+    messageId = msg.message_id;
+    db.prepare('UPDATE battles SET chat_game_message_id=? WHERE id=?').run(String(messageId), battle.id);
   } catch (err) {
-    if (!/message is not modified/i.test(err.message)) {
-      console.error(`broadcast: не удалось обновить боевое сообщение битвы ${battle.id}:`, err.message);
-    }
+    console.error(`broadcast: не удалось отправить боевое сообщение битвы ${battle.id}:`, err.message);
   }
   if (!messageId) return;
 
-  // Закрепляем ровно один раз — в момент, когда бой реально стартовал.
+  // Закрепляем ровно один раз — самое первое боевое сообщение, в момент,
+  // когда бой реально стартовал. Дальше новые сообщения на каждый ход
+  // публикуются под ним, не закрепляясь — иначе закреп скакал бы туда-сюда.
   if (battle.status === 'playing' && !battle.chatPinned) {
     try {
       await botRef.api.pinChatMessage(battle.chatId, messageId, { disable_notification: true });
@@ -275,13 +323,35 @@ async function syncGame(battle) {
     }
   }
 
-  // Открепляем сами по завершении — но только если реально закрепляли.
+  // Открепляем по завершении — без явного message_id открепляется то самое
+  // (единственное) сообщение, которое мы когда-то закрепили для этого боя.
   if ((battle.status === 'finished' || battle.status === 'cancelled') && battle.chatPinned) {
     try {
-      await botRef.api.unpinChatMessage(battle.chatId, messageId);
+      await botRef.api.unpinChatMessage(battle.chatId);
       db.prepare('UPDATE battles SET chat_pinned=0 WHERE id=?').run(battle.id);
     } catch (err) { /* не критично, если уже откреплено */ }
   }
+}
+
+// Отдельное сообщение о начале финала — публикуется РОВНО ОДИН РАЗ, отдельной
+// репликой (без кнопок: кнопки "в себя/в другого" придут следующим же
+// сообщением — тем самым обычным боевым сообщением на первый ход финала).
+// Вызывается ИЗ doSync (см. ниже), внутри общей очереди по битве, поэтому
+// гарантированно уходит раньше следующего обычного боевого сообщения.
+async function announceFinal(battle) {
+  if (!botRef || !battle.chatId) return;
+  // Подстраховка от редкой гонки: если два события подряд успели прочитать
+  // battle до того, как это же обновление записалось в БД — перепроверяем
+  // актуальный флаг прямо перед отправкой и не дублируем сообщение.
+  const fresh = db.prepare('SELECT final_chat_announced FROM battles WHERE id=?').get(battle.id);
+  if (!fresh || fresh.final_chat_announced) return;
+  const finalists = battle.players.filter((p) => p.alive);
+  try {
+    await botRef.api.sendMessage(battle.chatId, renderFinalMessage(battle, finalists), { parse_mode: 'HTML' });
+  } catch (err) {
+    console.error(`broadcast: не удалось отправить сообщение о финале битвы ${battle.id}:`, err.message);
+  }
+  db.prepare('UPDATE battles SET final_chat_announced=1 WHERE id=?').run(battle.id);
 }
 
 async function doSync(battle) {
@@ -300,6 +370,13 @@ async function doSync(battle) {
   // его на "бой начался", снимаем клавиатуру) и публикуем НОВОЕ сообщение боя.
   if (!battle.chatGameMessageId) {
     await syncLobby(battle, true);
+  }
+  // Ровно один раз, строго перед первым боевым сообщением финала: отдельная
+  // реплика "🔥 ФИНАЛ!". Стоит именно тут (а не в отдельном промисе из
+  // game.js), чтобы гарантированно попасть в чат раньше следующей обычной
+  // реплики хода — обе идут через одну и ту же очередь this.
+  if (battle.status === 'playing' && !battle.finalChatAnnounced && battle.aliveCount === battle.finalDuelSize) {
+    await announceFinal(battle);
   }
   await syncGame(battle);
 }

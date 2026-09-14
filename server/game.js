@@ -8,22 +8,17 @@ const MIN_BLANKS = 10;
 // Холостых патронов не может быть больше, чем в BLANKS_MULTIPLIER раз больше
 // макс. числа игроков (например, 20 игроков -> максимум 60 холостых).
 const BLANKS_MULTIPLIER = 3;
-// В финале (когда живых == finalSize(battle)) на каждый ход даётся 1 минута —
+// В финале (когда живых == FINAL_DUEL_SIZE) на каждый ход даётся 1 минута —
 // не выбрал "в себя"/"в другого" за это время, выбываешь автоматически.
 const TURN_TIMEOUT_MS = 60000;
-// Автоматическая стрельба: пока в живых больше finalSize(battle) игроков, барабан
-// стреляет сам раз в AUTO_SHOOT_INTERVAL_MS, с шансом SELF_SHOT_CHANCE выстрелить
-// в себя (иначе — в случайного другого живого игрока).
+// Автоматическая стрельба: пока в живых больше 2 игроков, барабан стреляет сам
+// раз в AUTO_SHOOT_INTERVAL_MS, с шансом SELF_SHOT_CHANCE выстрелить в себя
+// (иначе — в случайного другого живого игрока).
 const AUTO_SHOOT_INTERVAL_MS = 5000;
 const SELF_SHOT_CHANCE = 0.10; // 10% в себя, 90% в другого
-// Финал — это не всегда дуэль строго на 2 человек: если победителей несколько
-// (winnersCount), в финал выходят winnersCount+1 живых и бьются, пока не
-// останется ровно winnersCount — все они и есть победители. Например, при
-// winnersCount=2 финал начинается с 3 живых: они сражаются за 1 и 2 место,
-// бой заканчивается, как только один из троих выбывает и остаётся двое.
-// Когда живых игроков доходит до этого числа — барабан больше не стреляет
+// Когда живых игроков остаётся FINAL_DUEL_SIZE (2) — барабан больше не стреляет
 // сам, и решение "в себя / в другого" принимают сами игроки кнопками.
-function finalSize(winnersCount) { return winnersCount + 1; }
+const FINAL_DUEL_SIZE = 2;
 // В финале с начала хода нужно подождать SHOOT_COOLDOWN_MS, прежде чем можно
 // стрелять — и в мини-апе, и кнопками в чате (обе точки входа проверяются
 // здесь же, в performShot/shootSelf/shootOther, так что правило одно на
@@ -82,20 +77,16 @@ function setTurn(battleId, userId) {
   // навязчивым (уводило игрока из чата в личку на каждый ход).
 }
 
-// Отправляет ЛС + отдельное красивое сообщение в чат о начале финала ровно
-// один раз — в момент, когда живых игроков впервые становится finalSize(battle)
-// (учитывает и случай, когда битва с самого начала рассчитана всего на такое
-// число участников).
+// Отправляет ЛС о начале финала ровно один раз — в момент, когда живых
+// игроков впервые становится FINAL_DUEL_SIZE (учитывает и случай, когда
+// битва с самого начала рассчитана всего на FINAL_DUEL_SIZE участников).
 function maybeAnnounceFinal(battleId) {
-  const battle = db.prepare('SELECT final_notified, winners_count FROM battles WHERE id=?').get(battleId);
+  const battle = db.prepare('SELECT final_notified FROM battles WHERE id=?').get(battleId);
   if (!battle || battle.final_notified) return;
   const alive = getAlive(battleId);
-  if (alive.length !== finalSize(battle.winners_count)) return;
+  if (alive.length !== FINAL_DUEL_SIZE) return;
   db.prepare('UPDATE battles SET final_notified=1 WHERE id=?').run(battleId);
   notify.finalStarted(alive).catch(() => {});
-  // Сообщение "ФИНАЛ!" в чат шлётся не отсюда (см. broadcast.doSync) — так оно
-  // гарантированно идёт первым, строго перед следующим боевым сообщением,
-  // через ту же очередь синхронизации чата, а не отдельным гоночным промисом.
 }
 
 function shuffle(arr) {
@@ -111,14 +102,6 @@ function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function addLog(battleId, text, cls = '') {
   db.prepare('INSERT INTO logs (battle_id, text, cls, created_at) VALUES (?,?,?,?)')
     .run(battleId, text, cls, now());
-}
-
-// Увеличивает и возвращает номер хода (выстрела) битвы — используется, чтобы
-// подписывать строки лога "1.", "2." и т.д., отдельно на каждый выстрел (в том
-// числе на автоматическое выбывание по таймауту в финале — это тоже "ход").
-function nextShotNumber(battleId) {
-  db.prepare('UPDATE battles SET shot_count = shot_count + 1 WHERE id=?').run(battleId);
-  return db.prepare('SELECT shot_count FROM battles WHERE id=?').get(battleId).shot_count;
 }
 
 // Пересобирает и (если у битвы указан chatId) публикует/редактирует живое
@@ -210,9 +193,29 @@ function startBattle(battleId) {
   addLog(battleId, `Право стрелять получает ${starter.name}.`, 'sys');
 
   notify.battleStarted(battle, players, starter.name).catch(() => {});
-  // Если игроков ровно finalSize(battle) — битва стартует сразу в "финальном" режиме.
+  // Если игроков ровно FINAL_DUEL_SIZE — битва стартует сразу в "финальном" режиме.
   maybeAnnounceFinal(battleId);
   syncChat(battleId);
+  announceChatStart(battleId, starter.name);
+}
+
+// Публикует в чат отдельное стартовое уведомление ("барабан заряжен...") и
+// сразу вслед за ним — сообщение самого первого хода. Вызывается ровно один
+// раз, сразу после того, как карточка боя уже создана/закреплена (syncChat),
+// чтобы сообщения легли в чат в правильном порядке.
+function announceChatStart(battleId, starterName) {
+  const loaded = broadcast.announceLoaded(getBattle(battleId)).catch(() => {});
+  loaded.then(() => broadcast.announceTurn(getBattle(battleId), starterName, 'first').catch(() => {}));
+}
+
+// Правит текущее "открытое" сообщение хода в результат выстрела, а следом —
+// если передан nextName — публикует новое сообщение уже для следующего хода.
+// Оба вызова цепочкой через .then(), чтобы сообщения в чате не перепутались
+// местами (edit не обязан выполниться быстрее send, если пускать их параллельно).
+function announceChatShot(battleId, outcomeText, nextName, nextMode) {
+  const resolved = broadcast.resolveTurn(getBattle(battleId), outcomeText).catch(() => {});
+  if (!nextName) return;
+  resolved.then(() => broadcast.announceTurn(getBattle(battleId), nextName, nextMode).catch(() => {}));
 }
 
 // Разрешает все просроченные лобби (вызывается по таймеру)
@@ -245,38 +248,44 @@ function drawRound(battle) {
   return round;
 }
 
-// Бой заканчивается, как только живых остаётся не больше числа победителей
-// (winnersCount) — а не строго 1: если призовых мест несколько, все оставшиеся
-// живые и есть победители. Места им проставляются, только если ещё не
-// проставлены (при winnersCount=1 единственный живой уже получает место=1
-// именно здесь).
-function checkFinished(battleId) {
-  const battle = db.prepare('SELECT winners_count FROM battles WHERE id=?').get(battleId);
+// Текст, на который редактируется сообщение хода в момент выстрела (без
+// "Право стрелять переходит/остаётся..." — это уже отдельное следующее сообщение).
+function chatOutcomeText(shooterName, targetName, isSelf, round) {
+  if (round === 'blank') {
+    return isSelf ? `${shooterName} стреляет в себя — холостой.` : `${shooterName} стреляет в ${targetName} — холостой.`;
+  }
+  return isSelf
+    ? `${shooterName} стреляет в себя — боевой. ${shooterName} выбывает.`
+    : `${shooterName} стреляет в ${targetName} — боевой. ${targetName} выбывает.`;
+}
+
+function finishIfOneLeft(battleId) {
   const alive = getAlive(battleId);
-  if (alive.length === 0 || alive.length > battle.winners_count) return false;
-  alive.forEach((p, idx) => {
-    db.prepare('UPDATE players SET place=? WHERE battle_id=? AND user_id=? AND place IS NULL')
-      .run(idx + 1, battleId, p.user_id);
-  });
-  db.prepare("UPDATE battles SET status='finished', turn_user_id=NULL WHERE id=?").run(battleId);
-  addLog(battleId, 'Бой завершён.', 'sys');
-  return true;
+  if (alive.length <= 1) {
+    if (alive.length === 1) db.prepare('UPDATE players SET place=1 WHERE battle_id=? AND user_id=?')
+      .run(battleId, alive[0].user_id);
+    db.prepare("UPDATE battles SET status='finished', turn_user_id=NULL WHERE id=?").run(battleId);
+    addLog(battleId, 'Бой завершён.', 'sys');
+    return true;
+  }
+  return false;
 }
 
 function nextRandomShooter(battleId) {
-  if (checkFinished(battleId)) return;
-  // Как только после чьего-то выбывания живых остаётся ровно finalSize(battle),
+  if (finishIfOneLeft(battleId)) return;
+  // Как только после чьего-то выбывания живых остаётся ровно FINAL_DUEL_SIZE,
   // объявляем финал (один раз) — до того, как придёт пинг "твой ход" ниже.
   maybeAnnounceFinal(battleId);
   const alive = getAlive(battleId);
   const next = pick(alive);
   setTurn(battleId, next.user_id);
   addLog(battleId, `Право стрелять переходит к ${next.name}.`, 'sys');
+  broadcast.announceTurn(getBattle(battleId), next.name, 'transfer').catch(() => {});
 }
 
-// Вызывается по таймеру: работает ТОЛЬКО в финальной дуэли (когда живых <= finalSize(battle)).
+// Вызывается по таймеру: работает ТОЛЬКО в финальной дуэли (когда живых <= FINAL_DUEL_SIZE).
 // Если игрок держит пистолет дольше 1 минуты и не выбрал "в себя"/"в другого" — выбывает.
-// Пока живых больше finalSize(battle), барабан стреляет сам через autoShootTick(), и до
+// Пока живых больше FINAL_DUEL_SIZE, барабан стреляет сам через autoShootTick(), и до
 // этого таймаута дело не доходит (ход передаётся раньше).
 function checkTurnTimeouts() {
   const cutoff = now() - TURN_TIMEOUT_MS;
@@ -284,14 +293,14 @@ function checkTurnTimeouts() {
     SELECT id, turn_user_id FROM battles
     WHERE status='playing' AND turn_user_id IS NOT NULL AND turn_started_at IS NOT NULL AND turn_started_at <= ?
   `).all(cutoff);
-  for (const row of stuck) {
-    const battle = db.prepare('SELECT * FROM battles WHERE id=?').get(row.id);
+  for (const battle of stuck) {
     const alive = getAlive(battle.id);
-    if (alive.length > finalSize(battle.winners_count)) continue; // не финал — за этот ход отвечает автостельба
+    if (alive.length > FINAL_DUEL_SIZE) continue; // не финал — за этот ход отвечает автостельба
     const shooter = alive.find(p => p.user_id === battle.turn_user_id);
     if (!shooter) continue;
-    const shotNum = nextShotNumber(battle.id);
-    addLog(battle.id, `${shotNum}. ${shooter.name} не успел выстрелить за 1 минуту — выбывает.`, 'hit');
+    const outcomeText = `${shooter.name} не успел выстрелить за 1 минуту — выбывает.`;
+    addLog(battle.id, outcomeText, 'hit');
+    announceChatShot(battle.id, outcomeText, null, null);
     const fresh = db.prepare('SELECT remaining_place FROM battles WHERE id=?').get(battle.id).remaining_place;
     eliminate(battle.id, shooter.user_id, fresh);
     db.prepare('UPDATE battles SET remaining_place=? WHERE id=?').run(fresh - 1, battle.id);
@@ -300,7 +309,7 @@ function checkTurnTimeouts() {
   }
 }
 
-// Вызывается по таймеру раз в секунду: пока живых игроков больше finalSize(battle),
+// Вызывается по таймеру раз в секунду: пока живых игроков больше FINAL_DUEL_SIZE (2),
 // барабан сам решает за текущего игрока — с шансом SELF_SHOT_CHANCE стреляет в себя,
 // иначе в случайного другого живого игрока. Интервал между авто-выстрелами — AUTO_SHOOT_INTERVAL_MS.
 function autoShootTick() {
@@ -309,14 +318,13 @@ function autoShootTick() {
     SELECT id, turn_user_id FROM battles
     WHERE status='playing' AND turn_user_id IS NOT NULL AND turn_started_at IS NOT NULL AND turn_started_at <= ?
   `).all(cutoff);
-  for (const row of due) {
-    const battle = db.prepare('SELECT winners_count FROM battles WHERE id=?').get(row.id);
-    const alive = getAlive(row.id);
-    if (alive.length <= finalSize(battle.winners_count)) continue; // финал — решают сами игроки кнопками
-    const shooter = alive.find(p => p.user_id === row.turn_user_id);
+  for (const battle of due) {
+    const alive = getAlive(battle.id);
+    if (alive.length <= FINAL_DUEL_SIZE) continue; // финал — решают сами игроки кнопками
+    const shooter = alive.find(p => p.user_id === battle.turn_user_id);
     if (!shooter) continue;
     const isSelf = Math.random() < SELF_SHOT_CHANCE;
-    performShot(row.id, shooter.user_id, isSelf);
+    performShot(battle.id, shooter.user_id, isSelf);
   }
 }
 
@@ -344,25 +352,30 @@ function performShot(battleId, shooterUserId, isSelf) {
   let target = shooter;
   if (!isSelf) {
     const others = getAlive(battleId).filter(p => p.user_id !== shooterUserId);
-    if (others.length === 0) { checkFinished(battleId); syncChat(battleId); return getBattle(battleId); }
+    if (others.length === 0) { finishIfOneLeft(battleId); syncChat(battleId); return getBattle(battleId); }
     target = pick(others);
   }
-  const shotNum = nextShotNumber(battleId);
   const round = drawRound(battle);
+  const outcomeText = chatOutcomeText(shooter.name, target.name, isSelf, round);
   if (round === 'blank') {
     if (isSelf) {
-      addLog(battleId, `${shotNum}. ${shooter.name} стреляет в себя — холостой. Патрон передаётся снова ${shooter.name}.`);
+      addLog(battleId, `${shooter.name} стреляет в себя — холостой. Патрон передаётся снова ${shooter.name}.`);
       setTurn(battleId, shooterUserId);
+      announceChatShot(battleId, outcomeText, shooter.name, 'same');
     } else {
-      addLog(battleId, `${shotNum}. ${shooter.name} стреляет в ${target.name} — холостой. Право стрелять переходит к ${target.name}.`);
+      addLog(battleId, `${shooter.name} стреляет в ${target.name} — холостой. Право стрелять переходит к ${target.name}.`);
       setTurn(battleId, target.user_id);
+      announceChatShot(battleId, outcomeText, target.name, 'transfer');
     }
   } else {
     if (isSelf) {
-      addLog(battleId, `${shotNum}. ${shooter.name} стреляет в себя — боевой. ${shooter.name} выбывает.`, 'hit');
+      addLog(battleId, `${shooter.name} стреляет в себя — боевой. ${shooter.name} выбывает.`, 'hit');
     } else {
-      addLog(battleId, `${shotNum}. ${shooter.name} стреляет в ${target.name} — боевой. ${target.name} выбывает.`, 'hit');
+      addLog(battleId, `${shooter.name} стреляет в ${target.name} — боевой. ${target.name} выбывает.`, 'hit');
     }
+    // Следующий ход (если бой не закончился) публикует своё сообщение сам,
+    // внутри nextRandomShooter — там уже известен следующий стрелок.
+    announceChatShot(battleId, outcomeText, null, null);
     const fresh = db.prepare('SELECT remaining_place FROM battles WHERE id=?').get(battleId).remaining_place;
     eliminate(battleId, target.user_id, fresh);
     db.prepare('UPDATE battles SET remaining_place=? WHERE id=?').run(fresh - 1, battleId);
@@ -376,7 +389,7 @@ function shootSelf(user, battleId) {
   const battle = db.prepare('SELECT * FROM battles WHERE id=?').get(battleId);
   if (!battle) throw new Error('Битва не найдена.');
   assertMyTurn(battle, user);
-  if (getAlive(battleId).length > finalSize(battle.winners_count)) throw new Error('Пока не финал — барабан стреляет сам.');
+  if (getAlive(battleId).length > FINAL_DUEL_SIZE) throw new Error('Пока не финал — барабан стреляет сам.');
   assertShootCooldown(battle);
   return performShot(battleId, user.id, true);
 }
@@ -385,7 +398,7 @@ function shootOther(user, battleId) {
   const battle = db.prepare('SELECT * FROM battles WHERE id=?').get(battleId);
   if (!battle) throw new Error('Битва не найдена.');
   assertMyTurn(battle, user);
-  if (getAlive(battleId).length > finalSize(battle.winners_count)) throw new Error('Пока не финал — барабан стреляет сам.');
+  if (getAlive(battleId).length > FINAL_DUEL_SIZE) throw new Error('Пока не финал — барабан стреляет сам.');
   assertShootCooldown(battle);
   return performShot(battleId, user.id, false);
 }
@@ -412,6 +425,7 @@ function getBattle(battleId) {
     chatId: battle.chat_id,
     chatMessageId: battle.chat_message_id,
     chatGameMessageId: battle.chat_game_message_id,
+    chatTurnMessageId: battle.chat_turn_message_id,
     chatPinned: !!battle.chat_pinned,
     chatTitle: battle.chat_title,
     chatLink: battle.chat_link,
@@ -422,8 +436,7 @@ function getBattle(battleId) {
     turnTimeoutMs: TURN_TIMEOUT_MS,
     autoShootMs: AUTO_SHOOT_INTERVAL_MS,
     shootCooldownMs: SHOOT_COOLDOWN_MS,
-    finalDuelSize: finalSize(battle.winners_count),
-    finalChatAnnounced: !!battle.final_chat_announced,
+    finalDuelSize: FINAL_DUEL_SIZE,
     aliveCount: db.prepare('SELECT COUNT(*) c FROM players WHERE battle_id=? AND alive=1').get(battleId).c,
     endsAt: battle.ends_at,
     liveLeft: chamber.filter(c => c === 'live').length,
@@ -464,7 +477,7 @@ function getProfile(user) {
 }
 
 module.exports = {
-  MIN_PLAYERS, MAX_PLAYERS, MIN_BLANKS, BLANKS_MULTIPLIER, AVATARS, AUTO_SHOOT_INTERVAL_MS, SHOOT_COOLDOWN_MS,
+  MIN_PLAYERS, MAX_PLAYERS, MIN_BLANKS, BLANKS_MULTIPLIER, AVATARS, FINAL_DUEL_SIZE, AUTO_SHOOT_INTERVAL_MS, SHOOT_COOLDOWN_MS,
   createBattle, joinBattle, resolveExpiredLobbies, tickLobbyCountdowns, checkTurnTimeouts, autoShootTick,
   shootSelf, shootOther, getBattle, listBattles, getProfile, setAvatar,
 };

@@ -199,13 +199,16 @@ function startBattle(battleId) {
   announceChatStart(battleId, starter.name);
 }
 
-// Публикует в чат отдельное стартовое уведомление ("барабан заряжен...") и
-// сразу вслед за ним — сообщение самого первого хода. Вызывается ровно один
-// раз, сразу после того, как карточка боя уже создана/закреплена (syncChat),
-// чтобы сообщения легли в чат в правильном порядке.
+// Публикует в чат отдельное стартовое уведомление ("Пистолет заряжен,
+// начинаем."), следом — сообщение "История" (пока с тем, что уже есть в
+// логе — "Барабан заряжен...", "Право стрелять получает..."), и только потом
+// сообщение самого первого хода. Вызывается ровно один раз, сразу после того,
+// как карточка боя уже создана/закреплена (syncChat) — три сообщения идут
+// строго друг за другом (через .then()), чтобы порядок в чате не перепутался.
 function announceChatStart(battleId, starterName) {
   const loaded = broadcast.announceLoaded(getBattle(battleId)).catch(() => {});
-  loaded.then(() => broadcast.announceTurn(getBattle(battleId), starterName, 'first').catch(() => {}));
+  const logged = loaded.then(() => broadcast.syncLog(getBattle(battleId)).catch(() => {}));
+  logged.then(() => broadcast.announceTurn(getBattle(battleId), starterName, 'first').catch(() => {}));
 }
 
 // Правит текущее "открытое" сообщение хода в результат выстрела, а следом —
@@ -216,6 +219,13 @@ function announceChatShot(battleId, outcomeText, nextName, nextMode) {
   const resolved = broadcast.resolveTurn(getBattle(battleId), outcomeText).catch(() => {});
   if (!nextName) return;
   resolved.then(() => broadcast.announceTurn(getBattle(battleId), nextName, nextMode).catch(() => {}));
+}
+
+// Дописывает сообщение "История" свежим состоянием лога — вызывается после
+// каждого события боя (выстрел, таймаут хода), у "Истории" своя очередь
+// редактирований (см. broadcast.syncLog), так что порядок с ней всегда цел.
+function syncLogChat(battleId) {
+  broadcast.syncLog(getBattle(battleId)).catch(() => {});
 }
 
 // Разрешает все просроченные лобби (вызывается по таймеру)
@@ -306,6 +316,7 @@ function checkTurnTimeouts() {
     db.prepare('UPDATE battles SET remaining_place=? WHERE id=?').run(fresh - 1, battle.id);
     nextRandomShooter(battle.id);
     syncChat(battle.id);
+    syncLogChat(battle.id);
   }
 }
 
@@ -382,6 +393,7 @@ function performShot(battleId, shooterUserId, isSelf) {
     nextRandomShooter(battleId);
   }
   syncChat(battleId);
+  syncLogChat(battleId);
   return getBattle(battleId);
 }
 
@@ -425,6 +437,7 @@ function getBattle(battleId) {
     chatId: battle.chat_id,
     chatMessageId: battle.chat_message_id,
     chatGameMessageId: battle.chat_game_message_id,
+    chatLogMessageId: battle.chat_log_message_id,
     chatTurnMessageId: battle.chat_turn_message_id,
     chatPinned: !!battle.chat_pinned,
     chatTitle: battle.chat_title,

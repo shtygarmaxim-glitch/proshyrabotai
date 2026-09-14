@@ -68,7 +68,7 @@ if (!battleCols.includes('password')) {
 }
 if (!battleCols.includes('final_notified')) {
   // Флаг: уже отправили ЛС "начался финал" по этой битве (чтобы не слать повторно
-  // на каждый переход хода, пока живых игроков остаётся finalSize(battle)).
+  // на каждый переход хода, пока живых игроков остаётся FINAL_DUEL_SIZE).
   db.exec('ALTER TABLE battles ADD COLUMN final_notified INTEGER NOT NULL DEFAULT 0');
 }
 if (!battleCols.includes('chat_id')) {
@@ -102,20 +102,13 @@ if (!battleCols.includes('chat_game_message_id')) {
   // игроков, которое после старта больше не редактируется).
   db.exec('ALTER TABLE battles ADD COLUMN chat_game_message_id TEXT');
 }
-if (!battleCols.includes('final_chat_announced')) {
-  // Отдельный от final_notified флаг: тот отвечает за ЛС финалистам, этот — за
-  // отдельное красивое сообщение "ФИНАЛ!" в чате. Разделены специально: чат-
-  // сообщение отправляется внутри общей очереди broadcast.sync() (см. chains
-  // в broadcast.js), чтобы гарантированно не обогнать/не быть обогнанным
-  // следующим боевым сообщением — а ЛС такой гарантии порядка не требует.
-  db.exec('ALTER TABLE battles ADD COLUMN final_chat_announced INTEGER NOT NULL DEFAULT 0');
-}
-if (!battleCols.includes('shot_count')) {
-  // Счётчик выстрелов/ходов боя — растёт на 1 перед КАЖДЫМ выстрелом (и перед
-  // авто-выбыванием по таймауту в финале). Используется, чтобы подписывать
-  // каждую строку лога номером хода ("1. ...", "2. ..."), чтобы события в
-  // чате не сливались друг с другом.
-  db.exec('ALTER TABLE battles ADD COLUMN shot_count INTEGER NOT NULL DEFAULT 0');
+if (!battleCols.includes('chat_turn_message_id')) {
+  // ID текущего "открытого" сообщения хода ("Право стрелять получает/переходит
+  // к ...") — публикуется отдельным новым сообщением на каждый ход и потом
+  // РЕДАКТИРУЕТСЯ в результат выстрела ("... стреляет в ... — холостой/боевой").
+  // После редактирования (ход "закрыт") сбрасывается в NULL — следующий ход
+  // снова публикует новое сообщение, а не переписывает это же самое.
+  db.exec('ALTER TABLE battles ADD COLUMN chat_turn_message_id TEXT');
 }
 
 module.exports = db;

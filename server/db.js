@@ -102,6 +102,12 @@ if (!battleCols.includes('chat_game_message_id')) {
   // игроков, которое после старта больше не редактируется).
   db.exec('ALTER TABLE battles ADD COLUMN chat_game_message_id TEXT');
 }
+if (!battleCols.includes('chat_log_message_id')) {
+  // ID отдельного сообщения "История" — публикуется один раз в момент старта
+  // боя и дальше просто редактируется (дописывается) на каждое новое событие:
+  // полный лог битвы одним растущим сообщением, отдельно от сообщений хода.
+  db.exec('ALTER TABLE battles ADD COLUMN chat_log_message_id TEXT');
+}
 if (!battleCols.includes('chat_turn_message_id')) {
   // ID текущего "открытого" сообщения хода ("Право стрелять получает/переходит
   // к ...") — публикуется отдельным новым сообщением на каждый ход и потом

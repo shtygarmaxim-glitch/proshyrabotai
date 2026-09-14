@@ -44,10 +44,17 @@ async function battleStarted(battle, players, starterName) {
   await Promise.all(players.map((p) => send(p.user_id, text, { reply_markup: openKeyboard() })));
 }
 
-// Уходит в ЛС обоим финалистам ровно один раз — в момент, когда в живых
-// остаётся FINAL_DUEL_SIZE игроков и барабан перестаёт стрелять сам.
+// Красиво перечисляет имена через запятую, а перед последним — "и" (работает
+// и для двух имён, и для финала с несколькими призовыми местами).
+function joinNames(names) {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} и ${names[names.length - 1]}`;
+}
+
+// Уходит в ЛС всем финалистам ровно один раз — в момент, когда в живых
+// остаётся finalSize(battle) игроков и барабан перестаёт стрелять сам.
 async function finalStarted(finalists) {
-  const names = finalists.map((p) => p.name).join(' и ');
+  const names = joinNames(finalists.map((p) => p.name));
   const text =
     '☠️ ФИНАЛ!\n\n' +
     `В живых остались только: ${names}.\n` +
@@ -66,4 +73,4 @@ async function yourTurn(battleId, userId) {
   await send(userId, text, { reply_markup: shootKeyboard(battleId) });
 }
 
-module.exports = { init, battleStarted, finalStarted, yourTurn, send };
+module.exports = { init, battleStarted, finalStarted, yourTurn, send, joinNames };
